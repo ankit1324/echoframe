@@ -43,18 +43,22 @@ class AudioRecorder(private val sampleRate: Int = 16000) {
         startMs = System.currentTimeMillis()
         pcmBytes = 0
         thread = Thread {
-            val raf = RandomAccessFile(outFile, "rw")
-            raf.setLength(0)
-            raf.write(Wav.header(0, sampleRate)) // placeholder, patched on stop
-            val buf = ByteArray(minBuf)
-            record.startRecording()
-            while (recording) {
-                val n = record.read(buf, 0, buf.size)
-                if (n > 0) { raf.write(buf, 0, n); pcmBytes += n }
+            try {
+                RandomAccessFile(outFile, "rw").use { raf ->
+                    raf.setLength(0)
+                    raf.write(Wav.header(0, sampleRate)) // placeholder, patched on stop
+                    val buf = ByteArray(minBuf)
+                    record.startRecording()
+                    while (recording) {
+                        val n = record.read(buf, 0, buf.size)
+                        if (n > 0) { raf.write(buf, 0, n); pcmBytes += n }
+                    }
+                    // patch sizes - success path only
+                    raf.seek(0); raf.write(Wav.header(pcmBytes.toInt(), sampleRate))
+                }
+            } finally {
+                record.stop(); record.release()
             }
-            record.stop(); record.release()
-            // patch sizes
-            raf.seek(0); raf.write(Wav.header(pcmBytes.toInt(), sampleRate)); raf.close()
         }.also { it.start() }
     }
 
