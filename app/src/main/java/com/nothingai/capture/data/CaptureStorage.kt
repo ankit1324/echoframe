@@ -7,19 +7,16 @@ import java.io.FileOutputStream
 
 class CaptureStorage(context: Context) {
     private val root = File(context.filesDir, "captures")
+    private fun ensureDir(id: String): File = File(root, id).apply { mkdirs() }
 
     fun dir(id: String): File = File(root, id)
-    fun screenshotFile(id: String) = File(dir(id), "screenshot.png")
-    fun audioFile(id: String) = File(dir(id), "audio.wav")
-    fun transcriptFile(id: String) = File(dir(id), "transcript.txt")
+    fun screenshotFile(id: String) = File(ensureDir(id), "screenshot.png")
+    fun audioFile(id: String) = File(ensureDir(id), "audio.wav")
+    fun transcriptFile(id: String) = File(ensureDir(id), "transcript.txt")
 
     fun saveScreenshot(id: String, bitmap: Bitmap) {
-        dir(id).mkdirs()
         FileOutputStream(screenshotFile(id)).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
-    fun saveTranscript(id: String, text: String) {
-        dir(id).mkdirs()
-        transcriptFile(id).writeText(text)
-    }
+    fun saveTranscript(id: String, text: String) { transcriptFile(id).writeText(text) }
     fun deleteCapture(id: String) { dir(id).deleteRecursively() }
 }

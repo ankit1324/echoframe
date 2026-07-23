@@ -25,4 +25,10 @@ class CaptureStorageTest {
         storage.deleteCapture(id)
         assertThat(storage.dir(id).exists()).isFalse()
     }
+
+    @Test fun audioFileParentDirExists() {
+        val id = "20260101-000003-000"
+        val f = storage.audioFile(id)
+        assertThat(f.parentFile!!.exists()).isTrue()
+    }
 }
