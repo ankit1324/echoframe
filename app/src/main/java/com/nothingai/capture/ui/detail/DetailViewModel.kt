@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import com.nothingai.capture.data.Capture
@@ -40,6 +41,7 @@ class DetailViewModel(app: Application) : AndroidViewModel(app) {
         dao.updateStatus(id, CaptureStatus.PENDING)
         WorkManager.getInstance(getApplication()).enqueue(
             OneTimeWorkRequestBuilder<TranscribeWorker>()
+                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .setInputData(workDataOf(TranscribeWorker.KEY_ID to id))
                 .build()
         )

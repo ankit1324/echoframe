@@ -16,8 +16,8 @@ class WhisperTranscriber(private val context: Context) {
             System.loadLibrary("whisper_jni")
         }
 
-        private const val MODEL_ASSET = "models/ggml-base-q5_1.bin"
-        private const val MODEL_FILE = "ggml-base-q5_1.bin"
+        private const val DEFAULT_ASSET = "models/ggml-base-q5_1.bin"
+        private const val DEFAULT_FILE = "ggml-base.bin"
     }
 
     // JNI — signatures must match the exports in whisper_jni.cpp exactly.
@@ -35,26 +35,34 @@ class WhisperTranscriber(private val context: Context) {
      * process death or low-storage failure mid-copy leaves only the (ignored) temp file
      * behind, never a truncated file at the final path.
      */
-    fun ensureModel(): File {
+    fun getModelFile(): File {
+        val prefs = context.getSharedPreferences("notes_settings", Context.MODE_PRIVATE)
+        val modelId = prefs.getString("whisper_model", "base") ?: "base"
         val dir = File(context.filesDir, "models").apply { mkdirs() }
-        val out = File(dir, MODEL_FILE)
-        if (out.exists()) return out
 
-        val tmp = File(dir, "$MODEL_FILE.tmp")
+        // If they requested a specific model and it exists, use it.
+        val requestedFile = File(dir, "ggml-$modelId.bin")
+        if (requestedFile.exists()) return requestedFile
+
+        // Fallback to the bundled base model
+        val baseFile = File(dir, DEFAULT_FILE)
+        if (baseFile.exists()) return baseFile
+
+        // First time initialization of the bundled base model
+        val tmp = File(dir, "${DEFAULT_FILE}.tmp")
         try {
-            context.assets.open(MODEL_ASSET).use { input ->
+            context.assets.open(DEFAULT_ASSET).use { input ->
                 tmp.outputStream().use { input.copyTo(it) }
             }
-            if (!tmp.renameTo(out)) {
-                // Cross-filesystem or other rename failure: fall back to a copy.
-                tmp.copyTo(out, overwrite = true)
+            if (!tmp.renameTo(baseFile)) {
+                tmp.copyTo(baseFile, overwrite = true)
                 tmp.delete()
             }
         } catch (e: Exception) {
             tmp.delete()
             throw e
         }
-        return out
+        return baseFile
     }
 
     /**
@@ -64,11 +72,11 @@ class WhisperTranscriber(private val context: Context) {
      * Returns the trimmed transcript.
      */
     fun transcribe(wav: File): String {
-        val ctx = initContext(ensureModel().absolutePath)
+        val ctx = initContext(getModelFile().absolutePath)
         check(ctx != 0L) { "whisper init failed" }
         try {
             val samples = readWavToFloat(wav)
-            val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
+            val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 8)
             fullTranscribe(ctx, threads, samples)
             val sb = StringBuilder()
             for (i in 0 until getTextSegmentCount(ctx)) sb.append(getTextSegment(ctx, i))

@@ -1,18 +1,25 @@
 package com.nothingai.capture.assistant
 
+import android.animation.ObjectAnimator
+import android.animation.PropertyValuesHolder
+import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.service.voice.VoiceInteractionSession
 import android.util.Log
+import android.util.TypedValue
 import android.view.Gravity
-import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import com.nothingai.capture.data.Capture
@@ -30,95 +37,97 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/**
- * The assistant capture session UI + pipeline.
- *
- * Lifecycle when the OS invokes us as the assistant:
- *  onHandleScreenshot(bitmap) -> save screenshot.png (or hasScreenshot=false if null; the
- *      FLAG_SECURE / headless fallback)
- *  onShow -> show "● Recording" timer + STOP button, start audio, write RECORDING row
- *  STOP tap -> finalizeCapture() (save audio, write PENDING row, enqueue TranscribeWorker) + hide()
- *  onHide (ANY dismissal: home/back/lock/focus loss) -> finalizeCapture() if not already finished
- *
- * This is the system default-assistant session, so a crash or a leaked mic here takes down the
- * assistant. Two hard rules follow from that:
- *   - Every [io] launch body is wrapped in try/catch; a thrown exception must never escape.
- *   - The finalize body runs under [NonCancellable] so session teardown ([onDestroy] -> io.cancel())
- *     cannot corrupt a half-written capture.
- *
- * KNOWN LIMITATION (session reuse): the per-capture state reset happens at the end of
- * [finalizeCapture], on an IO thread. If a reused session delivers the NEXT capture's
- * onHandleScreenshot before onShow — and before that reset has landed — [ensureCaptureId] can
- * still observe the previous (already-finalized) id and bind the new screenshot to it. This
- * onHandleScreenshot-before-onShow race is rare and left undefended on purpose; the common
- * onShow-first reuse path is clean because the reset runs before the next onShow's id lookup in
- * practice.
- */
 class CaptureSession(context: Context) : VoiceInteractionSession(context) {
     private val storage = CaptureStorage(context)
     private val dao = CaptureDatabase.get(context).captureDao()
     private val recorder = AudioRecorder()
-
-    // SupervisorJob so a failure in one launch does not cancel siblings; each body also
-    // try/catches so nothing escapes to crash the host assistant process.
     private val io = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    // Written on the main thread (onShow / onHandleScreenshot) and, at reset time, on an IO
-    // thread; read on IO threads -> @Volatile for visibility. The id is generated once per
-    // capture and never overwritten mid-capture, so the screenshot, audio and Capture row all
-    // share one id regardless of callback ordering. Reset to null after a capture finalizes so
-    // a reused session (some OEMs call onShow again on the same instance) starts clean.
     @Volatile private var captureId: String? = null
     @Volatile private var hasScreenshot = false
     @Volatile private var startMs = 0L
     private var timerView: TextView? = null
+    private var pulseView: android.view.View? = null
+    private var pulseAnim: ObjectAnimator? = null
 
-    // Guards finalizeCapture so it runs at most once per capture. Reset to false when the
-    // finalize completes so a reused session can capture again.
     @Volatile private var finished = false
-
     private val ui = Handler(Looper.getMainLooper())
-    private val tick = object : Runnable {
-        override fun run() {
-            val secs = (System.currentTimeMillis() - startMs) / 1000
-            timerView?.text = "● Recording ${secs}s"
-            ui.postDelayed(this, 1000)
-        }
-    }
+    private var pulseState = false
 
-    override fun onCreateContentView() = LinearLayout(context).apply {
-        orientation = LinearLayout.VERTICAL
-        setBackgroundColor(Color.argb(220, 0, 0, 0))
-        setPadding(48, 96, 48, 96)
-        gravity = Gravity.CENTER
+    private fun dp(v: Int) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), context.resources.displayMetrics).toInt()
+
+    override fun onCreateContentView(): android.view.View {
+        val root = FrameLayout(context).apply {
+            setBackgroundColor(Color.argb(180, 0, 0, 0)) // dark translucent overlay
+        }
+
+        val card = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(32), dp(40), dp(32), dp(40))
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#F5F0E8")) // Parchment
+                cornerRadius = dp(24).toFloat()
+            }
+        }
+
+        val pulse = android.view.View(context).apply {
+            pulseView = this
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.parseColor("#D4735E")) // Coral
+            }
+            layoutParams = LinearLayout.LayoutParams(dp(16), dp(16)).apply {
+                bottomMargin = dp(16)
+            }
+        }
+        card.addView(pulse)
+
         timerView = TextView(context).apply {
-            text = "● Recording 0s"; setTextColor(Color.WHITE); textSize = 22f
+            text = "Listening… 0s"
+            setTextColor(Color.parseColor("#2C2C2C")) // Ink
+            textSize = 24f
+            setTypeface(android.graphics.Typeface.create(android.graphics.Typeface.SERIF, android.graphics.Typeface.NORMAL))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = dp(24)
+            }
         }
-        addView(timerView)
-        addView(Button(context).apply {
-            text = "STOP"
+        card.addView(timerView)
+
+        val stopBtn = TextView(context).apply {
+            text = "Save Note"
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            gravity = Gravity.CENTER
+            setPadding(dp(24), dp(12), dp(24), dp(12))
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#2C2C2C"))
+                cornerRadius = dp(16).toFloat()
+            }
+            isClickable = true
             setOnClickListener { finishCapture() }
+        }
+        card.addView(stopBtn)
+
+        root.addView(card, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply {
+            gravity = Gravity.BOTTOM
+            bottomMargin = dp(24)
+            leftMargin = dp(24)
+            rightMargin = dp(24)
         })
+
+        return root
     }
 
-    /** Main-thread only (all callers are OS main-thread callbacks): assign a fresh id if none. */
-    private fun ensureCaptureId(): String =
-        captureId ?: CaptureId.from(System.currentTimeMillis()).also { captureId = it }
+    private fun ensureCaptureId(): String = captureId ?: CaptureId.from(System.currentTimeMillis()).also { captureId = it }
 
     override fun onHandleScreenshot(screenshot: Bitmap?) {
         val id = ensureCaptureId()
         if (screenshot != null) {
             hasScreenshot = true
             io.launch {
-                try {
-                    storage.saveScreenshot(id, screenshot)
-                } catch (e: Exception) {
-                    Log.e("CaptureAssistant", "onHandleScreenshot: save failed id=$id", e)
-                }
+                try { storage.saveScreenshot(id, screenshot) } catch (e: Exception) { Log.e("CaptureAssistant", "onHandleScreenshot failed", e) }
             }
-            Log.d("CaptureAssistant", "onHandleScreenshot: saved screenshot id=$id")
-        } else {
-            Log.d("CaptureAssistant", "onHandleScreenshot: null bitmap, audio-only id=$id")
         }
     }
 
@@ -126,96 +135,73 @@ class CaptureSession(context: Context) : VoiceInteractionSession(context) {
         super.onShow(args, showFlags)
         val id = ensureCaptureId()
         startMs = System.currentTimeMillis()
-        // Snapshot cross-thread state on the main thread before dispatching to IO.
         val ts = startMs
         val screenshot = hasScreenshot
         Log.d("CaptureAssistant", "onShow: start capture id=$id hasScreenshot=$screenshot")
+        ui.post {
+            pulseView?.let { pulse ->
+                pulseAnim?.cancel()
+                pulseAnim = ObjectAnimator.ofPropertyValuesHolder(
+                    pulse,
+                    PropertyValuesHolder.ofFloat("alpha", 1f, 0.35f),
+                    PropertyValuesHolder.ofFloat("scaleX", 1f, 1.45f),
+                    PropertyValuesHolder.ofFloat("scaleY", 1f, 1.45f),
+                ).apply {
+                    duration = 900
+                    repeatMode = ValueAnimator.REVERSE
+                    repeatCount = ValueAnimator.INFINITE
+                    start()
+                }
+            }
+        }
         ui.post(tick)
         io.launch {
             try {
                 dao.upsert(Capture(id, ts, screenshot, 0, null, CaptureStatus.RECORDING))
                 recorder.start(storage.audioFile(id))
-                Log.d("CaptureAssistant", "onShow: RECORDING row written + recorder started id=$id")
             } catch (e: Exception) {
-                // recorder.start() (or the RECORDING upsert) failed: never leave a fake
-                // "● Recording" overlay up. Mark FAILED and tear the UI down.
                 Log.e("CaptureAssistant", "onShow: failed to start recording id=$id", e)
-                try {
-                    withContext(NonCancellable) { dao.updateStatus(id, CaptureStatus.FAILED) }
-                } catch (_: Exception) {
-                }
-                // Nothing was recorded, so there is nothing for finalize to do. Clear state so
-                // the onHide() triggered by hide() is a no-op and a reused session starts clean.
+                try { withContext(NonCancellable) { dao.updateStatus(id, CaptureStatus.FAILED) } } catch (_: Exception) {}
                 captureId = null
                 hasScreenshot = false
-                ui.post {
-                    ui.removeCallbacks(tick)
-                    hide()
-                }
+                ui.post { ui.removeCallbacks(tick); hide() }
             }
         }
     }
 
-    /** STOP button: finalize then dismiss our own overlay. */
+    private val tick = object : Runnable {
+        override fun run() {
+            val secs = (System.currentTimeMillis() - startMs) / 1000
+            timerView?.text = "Listening… ${secs}s"
+            ui.postDelayed(this, 1000)
+        }
+    }
+
     private fun finishCapture() {
         finalizeCapture()
         hide()
     }
 
-    /**
-     * onHide fires on ANY dismissal (home, back, lock, focus loss), not just our own hide().
-     * Finalize if the STOP path has not already done so. Never call hide() from here.
-     *
-     * KNOWN LIMITATION (late onHide after session reuse): [finished]/[captureId] are reset inside
-     * [finalizeCapture]'s `finally` on an IO thread, after the NonCancellable work completes. On
-     * the STOP path, hide() is called right after finalizeCapture() returns (from the main
-     * thread), so there is a window where the reset has not landed yet. If the framework redelivers
-     * a stray/late onHide() for the old capture on a reused session instance, and it arrives after
-     * that reused instance has already started a new onShow() (fresh captureId, finished=false)
-     * but the old finalize's reset is what actually lands, it could stomp state for the new
-     * in-progress capture or, in the other interleaving, finalize the new capture prematurely.
-     * This is a narrow OEM-specific session-reuse + timing corner distinct from the
-     * onHandleScreenshot-before-onShow limitation documented on the class, and it is deferred to
-     * physical-device hardening rather than solved here.
-     */
     override fun onHide() {
+        pulseAnim?.cancel()
+        pulseAnim = null
         if (!finished) finalizeCapture()
         super.onHide()
     }
 
-    /**
-     * Safe to cancel [io] here: the finalize body runs under NonCancellable, so a cancel cannot
-     * interrupt the essential stop-recorder / write-row / enqueue work.
-     */
     override fun onDestroy() {
         super.onDestroy()
+        pulseAnim?.cancel()
         io.cancel()
     }
 
-    /**
-     * Stop the recorder, write the PENDING row and enqueue transcription. Does NOT call hide().
-     * Runs at most once per capture (guarded by [finished]). The essential work runs under
-     * NonCancellable so it survives session teardown; recorder.stop() (a blocking thread join)
-     * runs first, then the DB upsert + WorkManager enqueue. Per-capture state is reset at the
-     * very end (after the NonCancellable work) so an in-flight finalize keeps using the right id
-     * while a subsequent onShow on a reused session starts clean.
-     */
     private fun finalizeCapture() {
         if (finished) return
         val id = captureId ?: return
         finished = true
         ui.removeCallbacks(tick)
-        // Snapshot cross-thread state on the main thread before dispatching to IO.
         val ts = startMs
         val screenshot = hasScreenshot
-        Log.d("CaptureAssistant", "finalizeCapture: stopping id=$id")
-        // ATOMIC start: onDestroy() calls io.cancel() right after finishCapture()/onHide() in a
-        // rapid teardown. With the default (cancellable) start, a cancel that reaches the Job
-        // before the dispatcher resumes this coroutine would skip it entirely -- it would never
-        // enter the try and never reach NonCancellable, reopening the stuck-RECORDING-row /
-        // leaked-mic scenario this finalize exists to prevent. ATOMIC guarantees the coroutine
-        // body always begins (and thus always reaches the NonCancellable block below) even if
-        // cancellation is already pending.
         io.launch(start = CoroutineStart.ATOMIC) {
             try {
                 withContext(NonCancellable) {
@@ -223,23 +209,14 @@ class CaptureSession(context: Context) : VoiceInteractionSession(context) {
                     dao.upsert(Capture(id, ts, screenshot, duration, null, CaptureStatus.PENDING))
                     WorkManager.getInstance(context).enqueue(
                         OneTimeWorkRequestBuilder<TranscribeWorker>()
+                            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                             .setInputData(workDataOf(TranscribeWorker.KEY_ID to id))
                             .build()
                     )
-                    Log.d(
-                        "CaptureAssistant",
-                        "finalizeCapture: PENDING row written + TranscribeWorker enqueued id=$id durationMs=$duration"
-                    )
                 }
             } catch (e: Exception) {
-                Log.e("CaptureAssistant", "finalizeCapture failed id=$id", e)
-                try {
-                    withContext(NonCancellable) { dao.updateStatus(id, CaptureStatus.FAILED) }
-                } catch (_: Exception) {
-                }
+                try { withContext(NonCancellable) { dao.updateStatus(id, CaptureStatus.FAILED) } } catch (_: Exception) {}
             } finally {
-                // Reset per-capture state for session reuse. Done last so the finalize above
-                // used the correct id; a reused onShow will now generate a fresh id.
                 finished = false
                 captureId = null
                 hasScreenshot = false
