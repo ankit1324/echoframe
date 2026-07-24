@@ -82,12 +82,14 @@ fun DetailScreen(id: String, onBack: () -> Unit, vm: DetailViewModel = viewModel
                 val audio = vm.audioFile(id)
                 if (audio.exists()) {
                     player?.release()
-                    player = MediaPlayer().apply {
-                        setDataSource(audio.absolutePath)
-                        setOnCompletionListener { mp -> mp.release(); player = null }
-                        prepare()
-                        start()
-                    }
+                    player = runCatching {
+                        MediaPlayer().apply {
+                            setDataSource(audio.absolutePath)
+                            setOnCompletionListener { mp -> mp.release(); player = null }
+                            prepare()
+                            start()
+                        }
+                    }.getOrNull()
                 }
             }) { Text("Play") }
             Button(onClick = { vm.retry(id) }) { Text("Retry") }
