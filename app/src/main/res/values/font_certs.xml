@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Debug keystore SHA256 fingerprint for Google Fonts -->
+    <string-array name="com_google_android_gms_fonts_certs">
+        <item>0E:EB:D1:7E:CC:ED:F9:18:D1:A3:BD:2E:CA:AC:B0:49:69:E1:73:1D:40:D5:3D:46:2C:32:E6:D2:B0:E9:64:CB</item>
+    </string-array>
+</resources>
