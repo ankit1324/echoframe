@@ -27,14 +27,32 @@ class WhisperTranscriber(private val context: Context) {
     private external fun getTextSegment(ctx: Long, index: Int): String
     private external fun freeContext(ctx: Long)
 
-    /** Copies the bundled model asset into filesDir/models on first call; returns the file. */
+    /**
+     * Copies the bundled model asset into filesDir/models on first call; returns the file.
+     *
+     * The final path only ever comes into existence via an atomic rename of a fully-copied
+     * temp file, so mere existence of [out] is sufficient proof of a complete copy — a
+     * process death or low-storage failure mid-copy leaves only the (ignored) temp file
+     * behind, never a truncated file at the final path.
+     */
     fun ensureModel(): File {
         val dir = File(context.filesDir, "models").apply { mkdirs() }
         val out = File(dir, MODEL_FILE)
-        if (!out.exists() || out.length() == 0L) {
+        if (out.exists()) return out
+
+        val tmp = File(dir, "$MODEL_FILE.tmp")
+        try {
             context.assets.open(MODEL_ASSET).use { input ->
-                out.outputStream().use { input.copyTo(it) }
+                tmp.outputStream().use { input.copyTo(it) }
             }
+            if (!tmp.renameTo(out)) {
+                // Cross-filesystem or other rename failure: fall back to a copy.
+                tmp.copyTo(out, overwrite = true)
+                tmp.delete()
+            }
+        } catch (e: Exception) {
+            tmp.delete()
+            throw e
         }
         return out
     }
