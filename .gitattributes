@@ -1,0 +1,3 @@
+# Treat model weights and audio samples as binary (no EOL conversion / textual diff).
+*.bin binary
+*.wav binary
