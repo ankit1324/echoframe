@@ -22,6 +22,7 @@ import com.nothingai.capture.data.CaptureStatus
 import com.nothingai.capture.data.CaptureStorage
 import com.nothingai.capture.stt.TranscribeWorker
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
@@ -164,6 +165,18 @@ class CaptureSession(context: Context) : VoiceInteractionSession(context) {
     /**
      * onHide fires on ANY dismissal (home, back, lock, focus loss), not just our own hide().
      * Finalize if the STOP path has not already done so. Never call hide() from here.
+     *
+     * KNOWN LIMITATION (late onHide after session reuse): [finished]/[captureId] are reset inside
+     * [finalizeCapture]'s `finally` on an IO thread, after the NonCancellable work completes. On
+     * the STOP path, hide() is called right after finalizeCapture() returns (from the main
+     * thread), so there is a window where the reset has not landed yet. If the framework redelivers
+     * a stray/late onHide() for the old capture on a reused session instance, and it arrives after
+     * that reused instance has already started a new onShow() (fresh captureId, finished=false)
+     * but the old finalize's reset is what actually lands, it could stomp state for the new
+     * in-progress capture or, in the other interleaving, finalize the new capture prematurely.
+     * This is a narrow OEM-specific session-reuse + timing corner distinct from the
+     * onHandleScreenshot-before-onShow limitation documented on the class, and it is deferred to
+     * physical-device hardening rather than solved here.
      */
     override fun onHide() {
         if (!finished) finalizeCapture()
@@ -196,7 +209,14 @@ class CaptureSession(context: Context) : VoiceInteractionSession(context) {
         val ts = startMs
         val screenshot = hasScreenshot
         Log.d("CaptureAssistant", "finalizeCapture: stopping id=$id")
-        io.launch {
+        // ATOMIC start: onDestroy() calls io.cancel() right after finishCapture()/onHide() in a
+        // rapid teardown. With the default (cancellable) start, a cancel that reaches the Job
+        // before the dispatcher resumes this coroutine would skip it entirely -- it would never
+        // enter the try and never reach NonCancellable, reopening the stuck-RECORDING-row /
+        // leaked-mic scenario this finalize exists to prevent. ATOMIC guarantees the coroutine
+        // body always begins (and thus always reaches the NonCancellable block below) even if
+        // cancellation is already pending.
+        io.launch(start = CoroutineStart.ATOMIC) {
             try {
                 withContext(NonCancellable) {
                     val duration = recorder.stop()
