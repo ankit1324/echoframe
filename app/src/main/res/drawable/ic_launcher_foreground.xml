@@ -3,19 +3,19 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- Capture frame (the "frame" — a rounded screen/aperture) -->
     <path
-        android:fillColor="#FFF9EF"
-        android:pathData="M28,20 L76,20 Q82,20 82,26 L82,82 Q82,88 76,88 L28,88 Q22,88 22,82 L22,26 Q22,20 28,20 Z" />
-    <path
-        android:fillColor="#D5E8D4"
-        android:pathData="M28,20 L76,20 Q82,20 82,26 L82,34 L22,34 L22,26 Q22,20 28,20 Z" />
-    <path
-        android:strokeColor="#2C2C2C"
-        android:strokeWidth="3"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="6"
+        android:strokeLineJoin="round"
         android:strokeLineCap="round"
-        android:fillColor="@android:color/transparent"
-        android:pathData="M34,47 L70,47 M34,59 L70,59 M34,71 L57,71" />
+        android:fillColor="#00000000"
+        android:pathData="M40,34 L68,34 Q74,34 74,40 L74,68 Q74,74 68,74 L40,74 Q34,74 34,68 L34,40 Q34,34 40,34 Z" />
+    <!-- Voice equalizer (the "echo" — a soundwave inside the frame) -->
     <path
-        android:fillColor="#D4A84B"
-        android:pathData="M78,14 L81,22 L89,25 L81,28 L78,36 L75,28 L67,25 L75,22 Z" />
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M47,50 L47,58 M54,45 L54,63 M61,49 L61,59" />
 </vector>
