@@ -17,9 +17,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckCircleOutline
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.MicNone
 import androidx.compose.material.icons.outlined.SettingsSuggest
 import androidx.compose.material3.Button
@@ -31,6 +33,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,6 +47,14 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import androidx.work.workDataOf
+import com.nothingai.capture.stt.ModelDownloaderWorker
+import com.nothingai.capture.stt.WhisperModel
+import com.nothingai.capture.ui.settings.SettingsPrefs
 import com.nothingai.capture.ui.theme.Coral
 import com.nothingai.capture.ui.theme.Ink
 import com.nothingai.capture.ui.theme.InkLight
@@ -59,11 +70,23 @@ fun SetupWizardScreen(onDone: () -> Unit) {
     val roleLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { refresh() }
     val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { refresh() }
 
+    // Same "model_download" tag/pattern as SettingsScreen, so a download started from
+    // either screen is tracked consistently and progress/completion drive `hasModel`.
+    val workManager = remember { WorkManager.getInstance(context) }
+    val workInfos by workManager.getWorkInfosByTagFlow("model_download").collectAsStateWithLifecycle(emptyList())
+    val activeDownload = workInfos.firstOrNull { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
+    val isDownloadingModel = activeDownload != null
+    val modelDownloadProgress = activeDownload?.progress?.getInt(ModelDownloaderWorker.KEY_PROGRESS, 0) ?: 0
+
+    // Re-check hasModel (and the other checks, cheaply) as the download progresses so the
+    // step flips to done the moment ModelDownloaderWorker's atomic rename completes.
+    LaunchedEffect(workInfos) { refresh() }
+
     Column(
         Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding()
+            .systemBarsPadding()
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -110,6 +133,26 @@ fun SetupWizardScreen(onDone: () -> Unit) {
                     }
                 }
             }
+            StepCard(
+                title = "Download speech model",
+                desc = when {
+                    isDownloadingModel -> "Downloading ${WhisperModel.TINY.label}… $modelDownloadProgress%"
+                    state.hasModel -> "${WhisperModel.TINY.label} is ready on-device."
+                    else -> "${WhisperModel.TINY.label}, ~${WhisperModel.TINY.sizeMb}MB — needed to transcribe your notes."
+                },
+                icon = { Icon(Icons.Outlined.Download, null, tint = Ink) },
+                done = state.hasModel,
+                buttonLabel = if (isDownloadingModel) "Downloading…" else "Download",
+                buttonEnabled = !isDownloadingModel,
+                onClick = {
+                    SettingsPrefs.get(context).edit().putString("whisper_model", WhisperModel.TINY.id).apply()
+                    val req = OneTimeWorkRequestBuilder<ModelDownloaderWorker>()
+                        .addTag("model_download")
+                        .setInputData(workDataOf(ModelDownloaderWorker.KEY_MODEL_ID to WhisperModel.TINY.id))
+                        .build()
+                    workManager.enqueue(req)
+                }
+            )
         }
 
         Spacer(Modifier.weight(1f))
@@ -127,7 +170,15 @@ fun SetupWizardScreen(onDone: () -> Unit) {
 }
 
 @Composable
-private fun StepCard(title: String, desc: String, icon: @Composable () -> Unit, done: Boolean, onClick: () -> Unit) {
+private fun StepCard(
+    title: String,
+    desc: String,
+    icon: @Composable () -> Unit,
+    done: Boolean,
+    buttonLabel: String = "Open",
+    buttonEnabled: Boolean = true,
+    onClick: () -> Unit,
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -141,7 +192,7 @@ private fun StepCard(title: String, desc: String, icon: @Composable () -> Unit, 
                 Text(desc, style = MaterialTheme.typography.bodySmall, color = InkLight)
             }
             if (!done) {
-                OutlinedButton(onClick = onClick, shape = RoundedCornerShape(12.dp)) { Text("Open") }
+                OutlinedButton(onClick = onClick, enabled = buttonEnabled, shape = RoundedCornerShape(12.dp)) { Text(buttonLabel) }
             }
         }
     }

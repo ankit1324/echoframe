@@ -4,6 +4,7 @@ import android.content.Context
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
@@ -58,6 +59,13 @@ class TranscribeWorker(appContext: Context, params: WorkerParameters) :
             dao.updateTranscript(id, text, CaptureStatus.DONE)
             dao.updateTitle(id, titleFromTranscript(text))
             Result.success()
+        } catch (e: ModelNotDownloadedException) {
+            // Selected model isn't on disk yet (first run, mid-download, or user
+            // switched to a model they haven't fetched). Not a crash — fail this
+            // work request; it's retryable once the model finishes downloading.
+            Log.w("TranscribeWorker", "model ${e.modelId} not downloaded, failing capture $id")
+            dao.updateStatus(id, CaptureStatus.FAILED)
+            Result.failure()
         } catch (e: Exception) {
             dao.updateStatus(id, CaptureStatus.FAILED)
             Result.failure()

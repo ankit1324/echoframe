@@ -6,8 +6,12 @@ import java.io.File
 /**
  * On-device speech-to-text backed by whisper.cpp (vendored, compiled via the NDK).
  *
- * Fully offline: the quantized model ships in assets and is copied to app storage
- * on first use. Transcription runs entirely on the CPU with no network access.
+ * Models are NOT bundled with the app. Each quantized model (tiny/base/small/large)
+ * is downloaded on demand by [ModelDownloaderWorker] into `filesDir/models/` when the
+ * user picks it (Settings or the first-run setup wizard). Transcription itself still
+ * runs entirely on-device/CPU with no network access — only fetching the model weights
+ * requires connectivity. If the currently-selected model hasn't been downloaded yet,
+ * [getModelFile] throws [ModelNotDownloadedException] instead of transcribing.
  */
 class WhisperTranscriber(private val context: Context) {
 
@@ -15,9 +19,6 @@ class WhisperTranscriber(private val context: Context) {
         init {
             System.loadLibrary("whisper_jni")
         }
-
-        private const val DEFAULT_ASSET = "models/ggml-base-q5_1.bin"
-        private const val DEFAULT_FILE = "ggml-base.bin"
     }
 
     // JNI — signatures must match the exports in whisper_jni.cpp exactly.
@@ -27,42 +28,43 @@ class WhisperTranscriber(private val context: Context) {
     private external fun getTextSegment(ctx: Long, index: Int): String
     private external fun freeContext(ctx: Long)
 
+    // Reuse a single context across transcriptions so the model stays hot in RAM.
+    // Free it on process death; a new context is re-created automatically if needed.
+    private var cachedContext: Long = 0
+    private var cachedModelPath: String = ""
+    @Synchronized private fun getContext(): Long {
+        val path = getModelFile().absolutePath
+        if (cachedContext != 0L && cachedModelPath == path) return cachedContext
+        if (cachedContext != 0L) {
+            try { freeContext(cachedContext) } catch (_: Exception) {}
+        }
+        cachedContext = initContext(path)
+        cachedModelPath = path
+        return cachedContext
+    }
+
     /**
-     * Copies the bundled model asset into filesDir/models on first call; returns the file.
+     * Resolves the currently-selected model (pref `whisper_model`, default "tiny") to its
+     * file in `filesDir/models/`. The model is downloaded on demand by
+     * [ModelDownloaderWorker] — never bundled — so this only returns a file that has
+     * actually completed downloading.
      *
-     * The final path only ever comes into existence via an atomic rename of a fully-copied
-     * temp file, so mere existence of [out] is sufficient proof of a complete copy — a
-     * process death or low-storage failure mid-copy leaves only the (ignored) temp file
-     * behind, never a truncated file at the final path.
+     * [ModelDownloaderWorker] only ever creates the final path via an atomic rename of a
+     * fully-downloaded temp file, so mere existence of the file is sufficient proof of a
+     * complete download — a process death or low-storage failure mid-download leaves only
+     * the (ignored) temp file behind, never a truncated file at the final path.
+     *
+     * @throws ModelNotDownloadedException if the selected model's file doesn't exist yet.
      */
     fun getModelFile(): File {
         val prefs = context.getSharedPreferences("notes_settings", Context.MODE_PRIVATE)
-        val modelId = prefs.getString("whisper_model", "base") ?: "base"
+        val modelId = prefs.getString("whisper_model", "tiny") ?: "tiny"
         val dir = File(context.filesDir, "models").apply { mkdirs() }
 
-        // If they requested a specific model and it exists, use it.
         val requestedFile = File(dir, "ggml-$modelId.bin")
         if (requestedFile.exists()) return requestedFile
 
-        // Fallback to the bundled base model
-        val baseFile = File(dir, DEFAULT_FILE)
-        if (baseFile.exists()) return baseFile
-
-        // First time initialization of the bundled base model
-        val tmp = File(dir, "${DEFAULT_FILE}.tmp")
-        try {
-            context.assets.open(DEFAULT_ASSET).use { input ->
-                tmp.outputStream().use { input.copyTo(it) }
-            }
-            if (!tmp.renameTo(baseFile)) {
-                tmp.copyTo(baseFile, overwrite = true)
-                tmp.delete()
-            }
-        } catch (e: Exception) {
-            tmp.delete()
-            throw e
-        }
-        return baseFile
+        throw ModelNotDownloadedException(modelId)
     }
 
     /**
@@ -72,17 +74,17 @@ class WhisperTranscriber(private val context: Context) {
      * Returns the trimmed transcript.
      */
     fun transcribe(wav: File): String {
-        val ctx = initContext(getModelFile().absolutePath)
+        val ctx = getContext()
         check(ctx != 0L) { "whisper init failed" }
         try {
             val samples = readWavToFloat(wav)
-            val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 8)
+            val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
             fullTranscribe(ctx, threads, samples)
             val sb = StringBuilder()
             for (i in 0 until getTextSegmentCount(ctx)) sb.append(getTextSegment(ctx, i))
             return sb.toString().trim()
         } finally {
-            freeContext(ctx)
+            // Context is kept alive in cachedContext
         }
     }
 
