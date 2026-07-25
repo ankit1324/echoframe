@@ -22,6 +22,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ContentCopy
@@ -39,6 +40,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.platform.LocalContext
@@ -59,6 +61,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.core.graphics.drawable.toBitmap
+import com.nothingai.capture.data.Capture
+import com.nothingai.capture.util.AppInfo
 import com.nothingai.capture.ui.theme.Coral
 import com.nothingai.capture.ui.theme.CoralLight
 import com.nothingai.capture.ui.theme.InkLight
@@ -165,6 +170,8 @@ fun DetailScreen(id: String, onBack: () -> Unit, vm: DetailViewModel = viewModel
             Text(c.transcript ?: "(${c.status.name.lowercase()})", modifier = Modifier.fillMaxWidth().padding(18.dp), style = MaterialTheme.typography.bodyLarge)
         }
 
+        SourceCard(capture = c, onSaveUrl = { vm.updateSourceUrl(id, it) })
+
         Spacer(Modifier.height(16.dp))
         Button(
             onClick = {
@@ -199,6 +206,47 @@ fun DetailScreen(id: String, onBack: () -> Unit, vm: DetailViewModel = viewModel
             }
             OutlinedButton(onClick = { confirmDelete = true }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = Coral)) {
                 Icon(Icons.Outlined.DeleteOutline, contentDescription = null, modifier = Modifier.size(18.dp)); Spacer(Modifier.size(6.dp)); Text("Delete")
+            }
+        }
+    }
+}
+
+@Composable
+private fun SourceCard(capture: Capture, onSaveUrl: (String?) -> Unit) {
+    if (capture.sourcePackage == null && capture.sourceUrl == null) return
+    val context = LocalContext.current
+    var url by remember(capture.id) { mutableStateOf(capture.sourceUrl ?: "") }
+
+    Spacer(Modifier.height(18.dp))
+    Text("Source", style = MaterialTheme.typography.titleLarge)
+    Spacer(Modifier.height(4.dp))
+    Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = ColorNote)) {
+        Column(Modifier.fillMaxWidth().padding(18.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                val icon = remember(capture.sourcePackage) { AppInfo.icon(context, capture.sourcePackage) }
+                if (icon != null) {
+                    Image(icon.toBitmap(48, 48).asImageBitmap(), contentDescription = null, modifier = Modifier.size(28.dp))
+                }
+                Text(AppInfo.label(context, capture.sourcePackage), style = MaterialTheme.typography.titleMedium)
+            }
+            Spacer(Modifier.height(10.dp))
+            OutlinedTextField(
+                value = url,
+                onValueChange = { url = it },
+                label = { Text("Source URL") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(onClick = { onSaveUrl(url) }, shape = RoundedCornerShape(14.dp), colors = ButtonDefaults.buttonColors(containerColor = Coral)) { Text("Save") }
+                if (!capture.sourceUrl.isNullOrBlank()) {
+                    OutlinedButton(onClick = {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(capture.sourceUrl)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        }
+                    }, shape = RoundedCornerShape(14.dp)) { Text("Open") }
+                }
             }
         }
     }

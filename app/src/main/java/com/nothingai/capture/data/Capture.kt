@@ -17,4 +17,6 @@ data class Capture(
     val title: String? = null,
     val tags: String = "",
     val isFavorite: Boolean = false,
+    val sourcePackage: String? = null,
+    val sourceUrl: String? = null,
 )
