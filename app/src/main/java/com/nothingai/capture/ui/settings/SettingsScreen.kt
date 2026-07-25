@@ -7,6 +7,7 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import com.nothingai.capture.stt.ModelDownloaderWorker
+import com.nothingai.capture.R
 import com.nothingai.capture.stt.WhisperModel
 import java.io.File
 
@@ -110,7 +111,7 @@ fun SettingsScreen(onBack: () -> Unit) {
         }
 
         Spacer(Modifier.weight(1f))
-        Text("notes-ai v0.1.0", style = MaterialTheme.typography.labelSmall, color = InkLight, modifier = Modifier.align(Alignment.CenterHorizontally))
+        Text("${context.getString(R.string.app_name)} v0.1.0", style = MaterialTheme.typography.labelSmall, color = InkLight, modifier = Modifier.align(Alignment.CenterHorizontally))
         Spacer(Modifier.height(16.dp))
     }
 }
