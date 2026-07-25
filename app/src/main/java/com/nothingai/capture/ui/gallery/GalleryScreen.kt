@@ -7,6 +7,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -65,6 +66,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -73,6 +75,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.core.graphics.drawable.toBitmap
+import com.nothingai.capture.util.AppInfo
 import com.nothingai.capture.data.Capture
 import com.nothingai.capture.data.CaptureStatus
 import com.nothingai.capture.ui.theme.Coral
@@ -221,6 +225,20 @@ private fun CaptureCard(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(date, style = MaterialTheme.typography.labelMedium, color = InkLight)
                     if (capture.hasScreenshot) Icon(Icons.Outlined.CameraAlt, contentDescription = "Screenshot saved", tint = InkLight, modifier = Modifier.padding(start = 7.dp).size(15.dp))
+                    if (capture.sourcePackage != null) {
+                        val ctx = LocalContext.current
+                        val srcIcon = remember(capture.sourcePackage) { AppInfo.icon(ctx, capture.sourcePackage) }
+                        Spacer(Modifier.width(8.dp))
+                        srcIcon?.let { Image(it.toBitmap(36, 36).asImageBitmap(), contentDescription = null, modifier = Modifier.size(14.dp)) }
+                        Text(
+                            AppInfo.label(ctx, capture.sourcePackage),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = InkLight,
+                            maxLines = 1,
+                            modifier = Modifier.padding(start = 4.dp),
+                        )
+                        if (capture.sourceUrl != null) Text("🔗", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 4.dp))
+                    }
                 }
                 Spacer(Modifier.height(7.dp))
                 Text(capture.title ?: if (capture.status == CaptureStatus.DONE) "Untitled moment" else "New voice note", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1)
