@@ -32,7 +32,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val prefs = remember { SettingsPrefs.get(context) }
     
-    var language by remember { mutableStateOf(prefs.getString("language", "English") ?: "English") }
+    var language by remember { mutableStateOf(prefs.getString("language", "Multilingual (Hinglish)") ?: "Multilingual (Hinglish)") }
     var theme by remember { mutableStateOf(prefs.getString("theme", "System Default") ?: "System Default") }
     
     val workManager = WorkManager.getInstance(context)

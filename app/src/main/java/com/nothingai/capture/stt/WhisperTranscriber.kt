@@ -23,7 +23,7 @@ class WhisperTranscriber(private val context: Context) {
 
     // JNI — signatures must match the exports in whisper_jni.cpp exactly.
     private external fun initContext(modelPath: String): Long
-    private external fun fullTranscribe(ctx: Long, numThreads: Int, audioData: FloatArray)
+    private external fun fullTranscribe(ctx: Long, numThreads: Int, audioData: FloatArray, language: String?)
     private external fun getTextSegmentCount(ctx: Long): Int
     private external fun getTextSegment(ctx: Long, index: Int): String
     private external fun freeContext(ctx: Long)
@@ -79,13 +79,24 @@ class WhisperTranscriber(private val context: Context) {
         try {
             val samples = readWavToFloat(wav)
             val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
-            fullTranscribe(ctx, threads, samples)
+            fullTranscribe(ctx, threads, samples, selectedLanguage())
             val sb = StringBuilder()
             for (i in 0 until getTextSegmentCount(ctx)) sb.append(getTextSegment(ctx, i))
             return sb.toString().trim()
         } finally {
             // Context is kept alive in cachedContext
         }
+    }
+
+    /**
+     * Maps the `language` setting to a whisper language code: "English" locks
+     * decoding to "en" (faster, more accurate for pure English); anything else —
+     * including the default "Multilingual (Hinglish)" — returns null so whisper
+     * auto-detects the spoken language.
+     */
+    private fun selectedLanguage(): String? {
+        val prefs = context.getSharedPreferences("notes_settings", Context.MODE_PRIVATE)
+        return if (prefs.getString("language", "Multilingual (Hinglish)") == "English") "en" else null
     }
 
     /**
