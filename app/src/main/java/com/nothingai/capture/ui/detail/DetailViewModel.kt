@@ -37,6 +37,10 @@ class DetailViewModel(app: Application) : AndroidViewModel(app) {
         dao.delete(id)
     }
 
+    fun updateSourceUrl(id: String, url: String?) = viewModelScope.launch {
+        dao.updateSourceUrl(id, url?.trim()?.ifBlank { null })
+    }
+
     fun retry(id: String) = viewModelScope.launch {
         dao.updateStatus(id, CaptureStatus.PENDING)
         WorkManager.getInstance(getApplication()).enqueue(
