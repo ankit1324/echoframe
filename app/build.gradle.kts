@@ -20,6 +20,19 @@ android {
         externalNativeBuild { cmake { cppFlags += "-std=c++17" } }
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
+    buildTypes {
+        getByName("release") {
+            isMinifyEnabled = true      // R8 tree-shakes material-icons-extended (~10k unused icon classes)
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            // Debug-signed so the shrunk APK installs directly for testing.
+            // Swap in a real release keystore before distributing.
+            signingConfig = signingConfigs.getByName("debug")
+        }
+    }
     buildFeatures { compose = true }
     composeOptions { }
     externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
