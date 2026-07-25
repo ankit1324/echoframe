@@ -21,6 +21,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -31,7 +34,7 @@ import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.DeleteOutline
-import androidx.compose.material.icons.outlined.Label
+import androidx.compose.material.icons.automirrored.outlined.Label
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.StarBorder
@@ -103,7 +106,8 @@ fun GalleryScreen(onOpen: (String) -> Unit, onSettings: () -> Unit, vm: GalleryV
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding()
+            .systemBarsPadding()
+            .imePadding()
             .padding(horizontal = 20.dp, vertical = 18.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -152,7 +156,11 @@ fun GalleryScreen(onOpen: (String) -> Unit, onSettings: () -> Unit, vm: GalleryV
         if (visibleCaptures.isEmpty()) {
             EmptyGallery()
         } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxSize()) {
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = 16.dp)
+            ) {
                 items(visibleCaptures, key = { it.id }) { capture ->
                     CaptureCard(
                         capture = capture,
@@ -233,7 +241,7 @@ private fun CaptureCard(
                     Spacer(Modifier.weight(1f))
                     IconButton(onClick = onFavorite) { Icon(if (capture.isFavorite) Icons.Outlined.Star else Icons.Outlined.StarBorder, contentDescription = if (capture.isFavorite) "Unfavorite" else "Favorite", tint = if (capture.isFavorite) Coral else InkLight) }
                     Box {
-                        IconButton(onClick = { tagMenuOpen = true }) { Icon(Icons.Outlined.Label, contentDescription = "Add tag", tint = InkLight) }
+                        IconButton(onClick = { tagMenuOpen = true }) { Icon(Icons.AutoMirrored.Outlined.Label, contentDescription = "Add tag", tint = InkLight) }
                         DropdownMenu(expanded = tagMenuOpen, onDismissRequest = { tagMenuOpen = false }) {
                             quickTags.forEach { tag -> DropdownMenuItem(text = { Text(tag) }, onClick = { onTag(tag); tagMenuOpen = false }) }
                         }
