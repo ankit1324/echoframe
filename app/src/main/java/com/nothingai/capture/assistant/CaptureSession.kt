@@ -45,6 +45,8 @@ class CaptureSession(context: Context) : VoiceInteractionSession(context) {
 
     @Volatile private var captureId: String? = null
     @Volatile private var hasScreenshot = false
+    @Volatile private var sourcePackage: String? = null
+    @Volatile private var sourceUrl: String? = null
     @Volatile private var startMs = 0L
     private var timerView: TextView? = null
     private var pulseView: android.view.View? = null
@@ -131,12 +133,24 @@ class CaptureSession(context: Context) : VoiceInteractionSession(context) {
         }
     }
 
+    override fun onHandleAssist(state: VoiceInteractionSession.AssistState) {
+        try {
+            sourcePackage = state.assistStructure?.activityComponent?.packageName
+            sourceUrl = state.assistContent?.webUri?.toString()
+        } catch (t: Throwable) {
+            Log.e("CaptureAssistant", "onHandleAssist failed", t)
+        }
+        super.onHandleAssist(state)
+    }
+
     override fun onShow(args: Bundle?, showFlags: Int) {
         super.onShow(args, showFlags)
         val id = ensureCaptureId()
         startMs = System.currentTimeMillis()
         val ts = startMs
         val screenshot = hasScreenshot
+        val pkg = sourcePackage
+        val url = sourceUrl
         Log.d("CaptureAssistant", "onShow: start capture id=$id hasScreenshot=$screenshot")
         ui.post {
             pulseView?.let { pulse ->
@@ -157,13 +171,16 @@ class CaptureSession(context: Context) : VoiceInteractionSession(context) {
         ui.post(tick)
         io.launch {
             try {
-                dao.upsert(Capture(id, ts, screenshot, 0, null, CaptureStatus.RECORDING))
+                dao.upsert(Capture(id, ts, screenshot, 0, null, CaptureStatus.RECORDING,
+                    sourcePackage = pkg, sourceUrl = url))
                 recorder.start(storage.audioFile(id))
             } catch (e: Exception) {
                 Log.e("CaptureAssistant", "onShow: failed to start recording id=$id", e)
                 try { withContext(NonCancellable) { dao.updateStatus(id, CaptureStatus.FAILED) } } catch (_: Exception) {}
                 captureId = null
                 hasScreenshot = false
+                sourcePackage = null
+                sourceUrl = null
                 ui.post { ui.removeCallbacks(tick); hide() }
             }
         }
@@ -202,11 +219,14 @@ class CaptureSession(context: Context) : VoiceInteractionSession(context) {
         ui.removeCallbacks(tick)
         val ts = startMs
         val screenshot = hasScreenshot
+        val pkg = sourcePackage
+        val url = sourceUrl
         io.launch(start = CoroutineStart.ATOMIC) {
             try {
                 withContext(NonCancellable) {
                     val duration = recorder.stop()
-                    dao.upsert(Capture(id, ts, screenshot, duration, null, CaptureStatus.PENDING))
+                    dao.upsert(Capture(id, ts, screenshot, duration, null, CaptureStatus.PENDING,
+                        sourcePackage = pkg, sourceUrl = url))
                     WorkManager.getInstance(context).enqueue(
                         OneTimeWorkRequestBuilder<TranscribeWorker>()
                             .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
@@ -220,6 +240,8 @@ class CaptureSession(context: Context) : VoiceInteractionSession(context) {
                 finished = false
                 captureId = null
                 hasScreenshot = false
+                sourcePackage = null
+                sourceUrl = null
             }
         }
     }
