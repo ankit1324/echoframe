@@ -32,6 +32,9 @@ interface CaptureDao {
     @Query("UPDATE captures SET status = :status WHERE id = :id")
     suspend fun updateStatus(id: String, status: CaptureStatus)
 
+    @Query("SELECT id FROM captures WHERE status = 'FAILED' OR status = 'PENDING'")
+    suspend fun idsAwaitingTranscription(): List<String>
+
     @Query("UPDATE captures SET sourceUrl = :url WHERE id = :id")
     suspend fun updateSourceUrl(id: String, url: String?)
 
