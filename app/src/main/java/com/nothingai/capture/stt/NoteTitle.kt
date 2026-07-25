@@ -8,7 +8,7 @@ fun titleFromTranscript(transcript: String): String {
     val sentence = clean.substringBeforeAny(".", "?", "!").trim().ifBlank { clean }
     if (sentence.length <= 48) return sentence.replaceFirstChar { it.titlecase() }
 
-    val words = sentence.split(' ').take(7)
+    val words = sentence.split(' ').take(8)
     return words.joinToString(" ").trimEnd(',', ':', ';') + "…"
 }
 
