@@ -1,10 +1,17 @@
 .superpowers/
 .gradle/
+.gradle-local/
 build/
 app/build/
 .cxx/
 app/.cxx/
 local.properties
+
+# Release signing — credentials and keystores never belong in the repo.
+keystore.properties
+*.jks
+*.keystore
+
 *.iml
 .idea/
 .DS_Store
