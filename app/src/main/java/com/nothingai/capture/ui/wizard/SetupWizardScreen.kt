@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckCircleOutline
-import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.MicNone
 import androidx.compose.material.icons.outlined.SettingsSuggest
 import androidx.compose.material3.Button
@@ -33,7 +32,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,46 +39,22 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkInfo
-import androidx.work.WorkManager
-import androidx.work.workDataOf
-import com.nothingai.capture.stt.ModelDownloaderWorker
-import com.nothingai.capture.stt.WhisperModel
-import com.nothingai.capture.ui.settings.SettingsPrefs
-import com.nothingai.capture.ui.theme.Coral
-import com.nothingai.capture.ui.theme.Ink
-import com.nothingai.capture.ui.theme.InkLight
-import com.nothingai.capture.ui.theme.MustardLight
-import com.nothingai.capture.ui.theme.ParchmentDark
+import com.nothingai.capture.ui.theme.semantic
 
 @Composable
 fun SetupWizardScreen(onDone: () -> Unit) {
     val context = LocalContext.current
+    val mutedText = MaterialTheme.semantic.mutedText
     var state by remember { mutableStateOf(SetupChecks.read(context)) }
     fun refresh() { state = SetupChecks.read(context) }
 
     val roleLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { refresh() }
     val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { refresh() }
-
-    // Same "model_download" tag/pattern as SettingsScreen, so a download started from
-    // either screen is tracked consistently and progress/completion drive `hasModel`.
-    val workManager = remember { WorkManager.getInstance(context) }
-    val workInfos by workManager.getWorkInfosByTagFlow("model_download").collectAsStateWithLifecycle(emptyList())
-    val activeDownload = workInfos.firstOrNull { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
-    val isDownloadingModel = activeDownload != null
-    val modelDownloadProgress = activeDownload?.progress?.getInt(ModelDownloaderWorker.KEY_PROGRESS, 0) ?: 0
-
-    // Re-check hasModel (and the other checks, cheaply) as the download progresses so the
-    // step flips to done the moment ModelDownloaderWorker's atomic rename completes.
-    LaunchedEffect(workInfos) { refresh() }
 
     Column(
         Modifier
@@ -94,21 +68,21 @@ fun SetupWizardScreen(onDone: () -> Unit) {
         StarDoodle(modifier = Modifier.size(50.dp))
         Spacer(Modifier.height(18.dp))
         Text("Hello there.", style = MaterialTheme.typography.displayMedium)
-        Text("Let’s get your digital notebook ready.", style = MaterialTheme.typography.bodyLarge, color = InkLight)
+        Text("Let’s get your digital notebook ready.", style = MaterialTheme.typography.bodyLarge, color = mutedText)
         Spacer(Modifier.height(36.dp))
 
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             StepCard(
                 title = "Allow microphone",
                 desc = "So we can hear your thoughts.",
-                icon = { Icon(Icons.Outlined.MicNone, null, tint = Ink) },
+                icon = { Icon(Icons.Outlined.MicNone, null, tint = MaterialTheme.colorScheme.onSurface) },
                 done = state.hasMic,
                 onClick = { micLauncher.launch(android.Manifest.permission.RECORD_AUDIO) }
             )
             StepCard(
                 title = "Set as digital assistant",
                 desc = "To capture anywhere you are.",
-                icon = { Icon(Icons.Outlined.SettingsSuggest, null, tint = Ink) },
+                icon = { Icon(Icons.Outlined.SettingsSuggest, null, tint = MaterialTheme.colorScheme.onSurface) },
                 done = state.isAssistant,
                 onClick = {
                     val rm = context.getSystemService(RoleManager::class.java)
@@ -119,13 +93,13 @@ fun SetupWizardScreen(onDone: () -> Unit) {
                     }
                 }
             )
-            Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = ParchmentDark)) {
+            Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                 Column(Modifier.padding(16.dp)) {
                     Text("3. Hold power button", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(4.dp))
                     Text(
                         "After completing step 2, open System → Gestures → Press & hold power button, and choose \"Digital assistant\". Enable \"Use screenshot\" in assistant settings.",
-                        style = MaterialTheme.typography.bodySmall, color = InkLight
+                        style = MaterialTheme.typography.bodySmall, color = mutedText
                     )
                     Spacer(Modifier.height(10.dp))
                     OutlinedButton(onClick = { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }) {
@@ -133,26 +107,6 @@ fun SetupWizardScreen(onDone: () -> Unit) {
                     }
                 }
             }
-            StepCard(
-                title = "Download speech model",
-                desc = when {
-                    isDownloadingModel -> "Downloading ${WhisperModel.TINY.label}… $modelDownloadProgress%"
-                    state.hasModel -> "${WhisperModel.TINY.label} is ready on-device."
-                    else -> "${WhisperModel.TINY.label}, ~${WhisperModel.TINY.sizeMb}MB — needed to transcribe your notes."
-                },
-                icon = { Icon(Icons.Outlined.Download, null, tint = Ink) },
-                done = state.hasModel,
-                buttonLabel = if (isDownloadingModel) "Downloading…" else "Download",
-                buttonEnabled = !isDownloadingModel,
-                onClick = {
-                    SettingsPrefs.get(context).edit().putString("whisper_model", WhisperModel.TINY.id).apply()
-                    val req = OneTimeWorkRequestBuilder<ModelDownloaderWorker>()
-                        .addTag("model_download")
-                        .setInputData(workDataOf(ModelDownloaderWorker.KEY_MODEL_ID to WhisperModel.TINY.id))
-                        .build()
-                    workManager.enqueue(req)
-                }
-            )
         }
 
         Spacer(Modifier.weight(1f))
@@ -161,7 +115,7 @@ fun SetupWizardScreen(onDone: () -> Unit) {
             onClick = onDone,
             modifier = Modifier.fillMaxWidth().height(52.dp),
             shape = RoundedCornerShape(16.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Coral),
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
         ) {
             Text(if (state.ready) "Start capturing" else "Complete steps to continue", style = MaterialTheme.typography.labelLarge)
         }
@@ -179,17 +133,18 @@ private fun StepCard(
     buttonEnabled: Boolean = true,
     onClick: () -> Unit,
 ) {
+    val semantic = MaterialTheme.semantic
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = if (done) MustardLight else Color.White),
+        colors = CardDefaults.cardColors(containerColor = if (done) semantic.warningSoft else semantic.cardSurface),
     ) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (done) Icon(Icons.Outlined.CheckCircleOutline, null, tint = Ink, modifier = Modifier.size(28.dp)) else icon()
+            if (done) Icon(Icons.Outlined.CheckCircleOutline, null, tint = semantic.onSoft, modifier = Modifier.size(28.dp)) else icon()
             Spacer(Modifier.size(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.titleMedium)
-                Text(desc, style = MaterialTheme.typography.bodySmall, color = InkLight)
+                Text(desc, style = MaterialTheme.typography.bodySmall, color = semantic.mutedText)
             }
             if (!done) {
                 OutlinedButton(onClick = onClick, enabled = buttonEnabled, shape = RoundedCornerShape(12.dp)) { Text(buttonLabel) }
@@ -200,6 +155,7 @@ private fun StepCard(
 
 @Composable
 private fun StarDoodle(modifier: Modifier = Modifier) {
+    val strokeColor = MaterialTheme.colorScheme.primary
     Canvas(modifier) {
         val w = size.width
         val h = size.height
@@ -211,6 +167,6 @@ private fun StarDoodle(modifier: Modifier = Modifier) {
             quadraticTo(w * .5f, h * .45f, w * .5f, h * .1f)
             close()
         }
-        drawPath(path, color = Coral, style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round))
+        drawPath(path, color = strokeColor, style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round))
     }
 }

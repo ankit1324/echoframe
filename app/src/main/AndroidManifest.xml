@@ -1,12 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- FOREGROUND_SERVICE + _DATA_SYNC: WorkManager's SystemForegroundService (see below) runs
+         the screenshot-analysis worker as an expedited dataSync foreground service.
+         No microphone-typed foreground service exists: recording happens inside the bound
+         VoiceInteractionSession, so FOREGROUND_SERVICE_MICROPHONE is deliberately NOT declared. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
-    <!-- Needed to resolve the name/icon of an arbitrary captured source app (Android 11+ package visibility). -->
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:name=".NothingApp"
@@ -39,5 +42,11 @@
             android:name=".assistant.CaptureSessionService"
             android:permission="android.permission.BIND_VOICE_INTERACTION"
             android:exported="true" />
+
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+
     </application>
 </manifest>

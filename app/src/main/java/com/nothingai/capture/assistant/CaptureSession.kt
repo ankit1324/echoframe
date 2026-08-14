@@ -15,13 +15,10 @@ import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.work.ExistingWorkPolicy
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.OutOfQuotaPolicy
-import androidx.work.WorkManager
-import androidx.work.workDataOf
 import com.nothingai.capture.data.Capture
 import com.nothingai.capture.data.CaptureDatabase
 import com.nothingai.capture.data.CaptureId
@@ -31,11 +28,13 @@ import com.nothingai.capture.stt.TranscribeWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicBoolean
 
 class CaptureSession(context: Context) : VoiceInteractionSession(context) {
     private val storage = CaptureStorage(context)
@@ -44,17 +43,21 @@ class CaptureSession(context: Context) : VoiceInteractionSession(context) {
     private val io = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     @Volatile private var captureId: String? = null
-    @Volatile private var hasScreenshot = false
     @Volatile private var sourcePackage: String? = null
     @Volatile private var sourceUrl: String? = null
     @Volatile private var startMs = 0L
     private var timerView: TextView? = null
     private var pulseView: android.view.View? = null
     private var pulseAnim: ObjectAnimator? = null
+    private var previewView: ImageView? = null
 
-    @Volatile private var finished = false
+    /**
+     * Claimed by whichever of save/discard runs first, so a capture can never be both saved and
+     * deleted — the two can otherwise race across the UI thread and the IO scope.
+     */
+    private val settled = AtomicBoolean(false)
+    @Volatile private var screenshotSaveJob: Job? = null
     private val ui = Handler(Looper.getMainLooper())
-    private var pulseState = false
 
     private fun dp(v: Int) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), context.resources.displayMetrics).toInt()
 
@@ -85,6 +88,18 @@ class CaptureSession(context: Context) : VoiceInteractionSession(context) {
         }
         card.addView(pulse)
 
+        // Shows what is about to be saved. The assistant can be triggered by accident over a PIN
+        // pad, an OTP or a private message, so the user must be able to see it and back out.
+        previewView = ImageView(context).apply {
+            visibility = android.view.View.GONE
+            adjustViewBounds = true
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(132)).apply {
+                bottomMargin = dp(14)
+            }
+        }
+        card.addView(previewView)
+
         timerView = TextView(context).apply {
             text = "Listening… 0s"
             setTextColor(Color.parseColor("#2C2C2C")) // Ink
@@ -95,6 +110,31 @@ class CaptureSession(context: Context) : VoiceInteractionSession(context) {
             }
         }
         card.addView(timerView)
+
+        val buttons = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+
+        val discardBtn = TextView(context).apply {
+            text = "Discard"
+            setTextColor(Color.parseColor("#2C2C2C"))
+            textSize = 16f
+            gravity = Gravity.CENTER
+            setPadding(dp(22), dp(12), dp(22), dp(12))
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#EDE7DB")) // ParchmentDark
+                cornerRadius = dp(16).toFloat()
+            }
+            isClickable = true
+            contentDescription = "Discard this capture"
+            setOnClickListener { discardCapture(); hide() }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { rightMargin = dp(12) }
+        }
+        buttons.addView(discardBtn)
 
         val stopBtn = TextView(context).apply {
             text = "Save Note"
@@ -107,9 +147,11 @@ class CaptureSession(context: Context) : VoiceInteractionSession(context) {
                 cornerRadius = dp(16).toFloat()
             }
             isClickable = true
+            contentDescription = "Save this capture"
             setOnClickListener { finishCapture() }
         }
-        card.addView(stopBtn)
+        buttons.addView(stopBtn)
+        card.addView(buttons)
 
         root.addView(card, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply {
             gravity = Gravity.BOTTOM
@@ -121,14 +163,41 @@ class CaptureSession(context: Context) : VoiceInteractionSession(context) {
         return root
     }
 
-    private fun ensureCaptureId(): String = captureId ?: CaptureId.from(System.currentTimeMillis()).also { captureId = it }
+    private fun ensureCaptureId(): String = captureId ?: CaptureId.from(System.currentTimeMillis()).also {
+        captureId = it
+        settled.set(false)
+    }
+
+    /** Grants the caller sole ownership of the current capture, or null if it is already settled. */
+    private fun claimCapture(): String? {
+        val id = captureId ?: return null
+        return if (settled.compareAndSet(false, true)) id else null
+    }
 
     override fun onHandleScreenshot(screenshot: Bitmap?) {
         val id = ensureCaptureId()
         if (screenshot != null) {
-            hasScreenshot = true
-            io.launch {
-                try { storage.saveScreenshot(id, screenshot) } catch (e: Exception) { Log.e("CaptureAssistant", "onHandleScreenshot failed", e) }
+            val previousSave = screenshotSaveJob
+            screenshotSaveJob = io.launch(start = CoroutineStart.ATOMIC) {
+                withContext(NonCancellable) {
+                    previousSave?.join()
+                    try { storage.saveScreenshot(id, screenshot) } catch (e: Exception) { Log.e("CaptureAssistant", "onHandleScreenshot failed", e) }
+                }
+                // Scaled copy for the consent preview; the source bitmap belongs to the framework.
+                val thumbnail = try {
+                    val scale = dp(132).toFloat() / screenshot.height.coerceAtLeast(1)
+                    Bitmap.createScaledBitmap(
+                        screenshot,
+                        (screenshot.width * scale).toInt().coerceAtLeast(1),
+                        (screenshot.height * scale).toInt().coerceAtLeast(1),
+                        true,
+                    )
+                } catch (e: Exception) {
+                    Log.e("CaptureAssistant", "thumbnail failed", e); null
+                }
+                if (thumbnail != null) ui.post {
+                    previewView?.apply { setImageBitmap(thumbnail); visibility = android.view.View.VISIBLE }
+                }
             }
         }
     }
@@ -148,10 +217,9 @@ class CaptureSession(context: Context) : VoiceInteractionSession(context) {
         val id = ensureCaptureId()
         startMs = System.currentTimeMillis()
         val ts = startMs
-        val screenshot = hasScreenshot
         val pkg = sourcePackage
         val url = sourceUrl
-        Log.d("CaptureAssistant", "onShow: start capture id=$id hasScreenshot=$screenshot")
+        Log.d("CaptureAssistant", "onShow: start capture id=$id")
         ui.post {
             pulseView?.let { pulse ->
                 pulseAnim?.cancel()
@@ -171,16 +239,15 @@ class CaptureSession(context: Context) : VoiceInteractionSession(context) {
         ui.post(tick)
         io.launch {
             try {
-                dao.upsert(Capture(id, ts, screenshot, 0, null, CaptureStatus.RECORDING,
+                dao.upsert(Capture(id, ts, false, 0, null, CaptureStatus.RECORDING,
                     sourcePackage = pkg, sourceUrl = url))
                 recorder.start(storage.audioFile(id))
             } catch (e: Exception) {
                 Log.e("CaptureAssistant", "onShow: failed to start recording id=$id", e)
+                // Settle it here so the hide() below cannot also try to discard the same capture.
+                settled.set(true)
                 try { withContext(NonCancellable) { dao.updateStatus(id, CaptureStatus.FAILED) } } catch (_: Exception) {}
-                captureId = null
-                hasScreenshot = false
-                sourcePackage = null
-                sourceUrl = null
+                resetSessionState()
                 ui.post { ui.removeCallbacks(tick); hide() }
             }
         }
@@ -202,46 +269,81 @@ class CaptureSession(context: Context) : VoiceInteractionSession(context) {
     override fun onHide() {
         pulseAnim?.cancel()
         pulseAnim = null
-        if (!finished) finalizeCapture()
+        // Dismissing without tapping Save discards. An assistant triggered by accident over a PIN
+        // pad, an OTP or a private message must not leave a screenshot and a recording of the room
+        // on disk; saving is the deliberate action, not the default one.
+        discardCapture()
         super.onHide()
     }
 
     override fun onDestroy() {
         super.onDestroy()
         pulseAnim?.cancel()
+        // Runs ATOMIC + NonCancellable, so it still completes despite the cancel below.
+        discardCapture()
         io.cancel()
     }
 
+    /** Deletes everything this session captured. No-op once the capture has been saved. */
+    private fun discardCapture() {
+        val id = claimCapture() ?: return
+        ui.removeCallbacks(tick)
+        io.launch(start = CoroutineStart.ATOMIC) {
+            try {
+                withContext(NonCancellable) {
+                    recorder.stop()
+                    screenshotSaveJob?.join()
+                    storage.deleteCapture(id)
+                    dao.delete(id)
+                }
+                Log.d("CaptureAssistant", "discarded capture id=$id")
+            } catch (e: Exception) {
+                Log.e("CaptureAssistant", "discard failed for id=$id", e)
+            } finally {
+                resetSessionState()
+            }
+        }
+    }
+
+    private fun resetSessionState() {
+        captureId = null
+        screenshotSaveJob = null
+        sourcePackage = null
+        sourceUrl = null
+        ui.post { previewView?.apply { setImageBitmap(null); visibility = android.view.View.GONE } }
+    }
+
     private fun finalizeCapture() {
-        if (finished) return
-        val id = captureId ?: return
-        finished = true
+        val id = claimCapture() ?: return
         ui.removeCallbacks(tick)
         val ts = startMs
-        val screenshot = hasScreenshot
         val pkg = sourcePackage
         val url = sourceUrl
         io.launch(start = CoroutineStart.ATOMIC) {
             try {
                 withContext(NonCancellable) {
                     val duration = recorder.stop()
-                    dao.upsert(Capture(id, ts, screenshot, duration, null, CaptureStatus.PENDING,
-                        sourcePackage = pkg, sourceUrl = url))
-                    WorkManager.getInstance(context).enqueue(
-                        OneTimeWorkRequestBuilder<TranscribeWorker>()
-                            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-                            .setInputData(workDataOf(TranscribeWorker.KEY_ID to id))
-                            .build()
+                    screenshotSaveJob?.join()
+                    val screenshot = storage.screenshotFile(id).isFile
+                    val updated = dao.finalizeRecording(
+                        id = id,
+                        hasScreenshot = screenshot,
+                        durationMs = duration,
+                        status = CaptureStatus.PENDING,
+                        sourcePackage = pkg,
+                        sourceUrl = url,
                     )
+                    if (updated == 0) {
+                        // onShow's insert never landed — recreate the row so the capture isn't lost.
+                        dao.upsert(Capture(id, ts, screenshot, duration, null, CaptureStatus.PENDING,
+                            sourcePackage = pkg, sourceUrl = url))
+                    }
+                    TranscribeWorker.enqueue(context, id, ExistingWorkPolicy.KEEP)
                 }
             } catch (e: Exception) {
                 try { withContext(NonCancellable) { dao.updateStatus(id, CaptureStatus.FAILED) } } catch (_: Exception) {}
             } finally {
-                finished = false
-                captureId = null
-                hasScreenshot = false
-                sourcePackage = null
-                sourceUrl = null
+                resetSessionState()
             }
         }
     }

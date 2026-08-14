@@ -3,6 +3,7 @@ package com.nothingai.capture.ui.gallery
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.nothingai.capture.R
 import com.nothingai.capture.data.Capture
 import com.nothingai.capture.data.CaptureDatabase
 import com.nothingai.capture.data.CaptureStorage
@@ -33,9 +34,9 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
                     timestamp = System.currentTimeMillis(),
                     hasScreenshot = false,
                     durationMs = 2500,
-                    transcript = "Welcome to notes-ai. Hold the power button to record your thoughts, and they will be transcribed right here.",
+                    transcript = app.getString(R.string.welcome_note_body, app.getString(R.string.app_name)),
                     status = CaptureStatus.DONE,
-                    title = "Welcome to notes-ai",
+                    title = app.getString(R.string.welcome_note_title, app.getString(R.string.app_name)),
                     tags = "Idea",
                     isFavorite = true
                 ))

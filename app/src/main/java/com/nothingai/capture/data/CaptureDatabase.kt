@@ -14,7 +14,7 @@ class StatusConverter {
     @TypeConverter fun fromStatus(s: CaptureStatus) = s.name
 }
 
-@Database(entities = [Capture::class], version = 3, exportSchema = false)
+@Database(entities = [Capture::class], version = 4, exportSchema = false)
 @TypeConverters(StatusConverter::class)
 abstract class CaptureDatabase : RoomDatabase() {
     abstract fun captureDao(): CaptureDao
@@ -35,6 +35,12 @@ abstract class CaptureDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE captures ADD COLUMN category TEXT NOT NULL DEFAULT 'OTHER'")
+            }
+        }
+
         @Volatile private var INSTANCE: CaptureDatabase? = null
 
         fun get(context: Context): CaptureDatabase =
@@ -44,7 +50,7 @@ abstract class CaptureDatabase : RoomDatabase() {
                     CaptureDatabase::class.java,
                     "captures.db",
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .build()
                     .also { INSTANCE = it }
             }

@@ -1,6 +1,7 @@
 package com.nothingai.capture.assistant
 
 import com.google.common.truth.Truth.assertThat
+import com.nothingai.capture.util.Wav
 import org.junit.Test
 import java.nio.ByteBuffer
 import java.nio.ByteOrder

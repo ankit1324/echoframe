@@ -36,10 +36,33 @@ class CaptureDaoTest {
         assertThat(c.status).isEqualTo(CaptureStatus.DONE)
     }
 
+    @Test fun updateEditableNoteChangesTitleAndBodyTogether() = runTest {
+        dao.upsert(Capture("a", 1, true, 100, "old body", CaptureStatus.DONE, title = "Old title"))
+
+        dao.updateNote("a", "New title", "new body")
+
+        val capture = dao.get("a")!!
+        assertThat(capture.title).isEqualTo("New title")
+        assertThat(capture.transcript).isEqualTo("new body")
+        assertThat(capture.status).isEqualTo(CaptureStatus.DONE)
+    }
+
+    @Test fun updateCategoryPersistsAutomaticCategory() = runTest {
+        dao.upsert(Capture("a", 1, true, 100, "receipt", CaptureStatus.DONE))
+        dao.updateCategory("a", CaptureCategory.RECEIPT.name)
+        assertThat(dao.get("a")!!.category).isEqualTo(CaptureCategory.RECEIPT.name)
+    }
+
     @Test fun searchMatchesTranscript() = runTest {
         dao.upsert(Capture("a", 1, true, 1, "buy milk", CaptureStatus.DONE))
         dao.upsert(Capture("b", 2, true, 1, "call mom", CaptureStatus.DONE))
         val hits = dao.search("milk").first()
+        assertThat(hits.map { it.id }).containsExactly("a")
+    }
+
+    @Test fun searchMatchesCategory() = runTest {
+        dao.upsert(Capture("a", 1, true, 1, "order summary", CaptureStatus.DONE, category = CaptureCategory.SHOPPING.name))
+        val hits = dao.search("SHOPPING").first()
         assertThat(hits.map { it.id }).containsExactly("a")
     }
 }

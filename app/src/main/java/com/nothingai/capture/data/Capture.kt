@@ -19,4 +19,5 @@ data class Capture(
     val isFavorite: Boolean = false,
     val sourcePackage: String? = null,
     val sourceUrl: String? = null,
+    val category: String = CaptureCategory.OTHER.name,
 )

@@ -56,6 +56,11 @@ class CaptureSourceTest {
             assertThat(c.getString(0)).isEqualTo("com.x")
             assertThat(c.getString(1)).isEqualTo("https://x")
         }
+        CaptureDatabase.MIGRATION_3_4.migrate(raw)
+        raw.query("SELECT category FROM captures WHERE id='a'").use { c ->
+            assertThat(c.moveToFirst()).isTrue()
+            assertThat(c.getString(0)).isEqualTo(CaptureCategory.OTHER.name)
+        }
         raw.close()
     }
 }

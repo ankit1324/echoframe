@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -79,31 +81,24 @@ import androidx.core.graphics.drawable.toBitmap
 import com.nothingai.capture.util.AppInfo
 import com.nothingai.capture.data.Capture
 import com.nothingai.capture.data.CaptureStatus
-import com.nothingai.capture.ui.theme.Coral
-import com.nothingai.capture.ui.theme.CoralLight
-import com.nothingai.capture.ui.theme.Ink
-import com.nothingai.capture.ui.theme.InkFaint
-import com.nothingai.capture.ui.theme.InkLight
-import com.nothingai.capture.ui.theme.MustardLight
-import com.nothingai.capture.ui.theme.ParchmentDark
-import com.nothingai.capture.ui.theme.SageLight
+import com.nothingai.capture.data.CaptureCategory
+import com.nothingai.capture.ui.theme.semantic
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private enum class GalleryFilter { ALL, FAVORITES, TAGGED }
 private val quickTags = listOf("Idea", "Reminder", "Meeting", "Personal")
 
 @Composable
 fun GalleryScreen(onOpen: (String) -> Unit, onSettings: () -> Unit, vm: GalleryViewModel = viewModel()) {
     val captures by vm.items.collectAsStateWithLifecycle()
     var query by remember { mutableStateOf("") }
-    var filter by remember { mutableStateOf(GalleryFilter.ALL) }
+    var favoritesOnly by remember { mutableStateOf(false) }
+    var category by remember { mutableStateOf<CaptureCategory?>(null) }
     val context = LocalContext.current
-    val visibleCaptures = when (filter) {
-        GalleryFilter.ALL -> captures
-        GalleryFilter.FAVORITES -> captures.filter { it.isFavorite }
-        GalleryFilter.TAGGED -> captures.filter { it.tags.isNotBlank() }
+    val mutedText = MaterialTheme.semantic.mutedText
+    val visibleCaptures = captures.filter { capture ->
+        (!favoritesOnly || capture.isFavorite) && (category == null || capture.category == category?.name)
     }
 
     Column(
@@ -120,15 +115,15 @@ fun GalleryScreen(onOpen: (String) -> Unit, onSettings: () -> Unit, vm: GalleryV
                 Text(
                     if (visibleCaptures.isEmpty()) "Your voice scrapbook" else "${visibleCaptures.size} saved ${if (visibleCaptures.size == 1) "moment" else "moments"}",
                     style = MaterialTheme.typography.bodySmall,
-                    color = InkLight,
+                    color = mutedText,
                 )
             }
             IconButton(onClick = onSettings) {
-                Icon(Icons.Outlined.Settings, contentDescription = "Settings", tint = InkLight)
+                Icon(Icons.Outlined.Settings, contentDescription = "Settings", tint = mutedText)
             }
             Spacer(Modifier.width(8.dp))
-            Box(modifier = Modifier.size(50.dp).clip(CircleShape).background(CoralLight), contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.AutoAwesome, contentDescription = null, tint = Coral, modifier = Modifier.size(25.dp))
+            Box(modifier = Modifier.size(50.dp).clip(CircleShape).background(MaterialTheme.semantic.accentSoft), contentAlignment = Alignment.Center) {
+                Icon(Icons.Outlined.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(25.dp))
             }
         }
         Spacer(Modifier.height(14.dp))
@@ -138,22 +133,27 @@ fun GalleryScreen(onOpen: (String) -> Unit, onSettings: () -> Unit, vm: GalleryV
             value = query,
             onValueChange = { query = it; vm.setQuery(it) },
             placeholder = { Text("Search titles, notes, tags…") },
-            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = InkLight) },
+            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = mutedText) },
             singleLine = true,
             shape = RoundedCornerShape(18.dp),
             colors = OutlinedTextFieldDefaults.colors(
-                unfocusedContainerColor = Color.White.copy(alpha = .5f),
-                focusedContainerColor = Color.White.copy(alpha = .8f),
-                unfocusedBorderColor = ParchmentDark,
-                focusedBorderColor = Coral,
+                unfocusedContainerColor = MaterialTheme.semantic.fieldSurface.copy(alpha = .5f),
+                focusedContainerColor = MaterialTheme.semantic.fieldSurface.copy(alpha = .8f),
+                unfocusedBorderColor = MaterialTheme.colorScheme.surfaceVariant,
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
             ),
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(10.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = filter == GalleryFilter.ALL, onClick = { filter = GalleryFilter.ALL }, label = { Text("All") })
-            FilterChip(selected = filter == GalleryFilter.FAVORITES, onClick = { filter = GalleryFilter.FAVORITES }, label = { Text("Favorites") })
-            FilterChip(selected = filter == GalleryFilter.TAGGED, onClick = { filter = GalleryFilter.TAGGED }, label = { Text("Tagged") })
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        ) {
+            FilterChip(selected = category == null, onClick = { category = null }, label = { Text("All") })
+            FilterChip(selected = favoritesOnly, onClick = { favoritesOnly = !favoritesOnly }, label = { Text("Favorites") })
+            CaptureCategory.entries.forEach { option ->
+                FilterChip(selected = category == option, onClick = { category = option }, label = { Text(option.label) })
+            }
         }
         Spacer(Modifier.height(14.dp))
 
@@ -194,14 +194,15 @@ private fun CaptureCard(
     onShare: () -> Unit,
     onTag: (String) -> Unit,
 ) {
+    val semantic = MaterialTheme.semantic
     val cardColor = when (capture.id.lastOrNull()?.code?.rem(3)) {
-        0 -> Color.White
-        1 -> MustardLight.copy(alpha = .65f)
-        else -> SageLight.copy(alpha = .6f)
+        0 -> semantic.cardSurface
+        1 -> semantic.warningSoft.copy(alpha = .65f)
+        else -> semantic.successSoft.copy(alpha = .6f)
     }
     val snippet = when (capture.status) {
         CaptureStatus.DONE -> capture.transcript?.take(130) ?: "A quiet moment, waiting for words."
-        CaptureStatus.FAILED -> "This note needs another listen."
+        CaptureStatus.FAILED -> "Screenshot analysis needs another try."
         CaptureStatus.RECORDING -> "Listening…"
         else -> "Finding the words…"
     }
@@ -213,7 +214,7 @@ private fun CaptureCard(
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
             title = { Text("Delete this note?") },
-            text = { Text("The recording, screenshot, and transcript will be removed from this device.") },
+            text = { Text("The recording, screenshot, and analyzed note will be removed from this device.") },
             confirmButton = { TextButton(onClick = { confirmDelete = false; onDelete() }) { Text("Delete") } },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Keep") } },
         )
@@ -223,8 +224,8 @@ private fun CaptureCard(
         Row(modifier = Modifier.fillMaxWidth().padding(start = 18.dp, top = 16.dp, bottom = 12.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(date, style = MaterialTheme.typography.labelMedium, color = InkLight)
-                    if (capture.hasScreenshot) Icon(Icons.Outlined.CameraAlt, contentDescription = "Screenshot saved", tint = InkLight, modifier = Modifier.padding(start = 7.dp).size(15.dp))
+                    Text(date, style = MaterialTheme.typography.labelMedium, color = semantic.mutedText)
+                    if (capture.hasScreenshot) Icon(Icons.Outlined.CameraAlt, contentDescription = "Screenshot saved", tint = semantic.mutedText, modifier = Modifier.padding(start = 7.dp).size(15.dp))
                     if (capture.sourcePackage != null) {
                         val ctx = LocalContext.current
                         val srcIcon = remember(capture.sourcePackage) { AppInfo.icon(ctx, capture.sourcePackage) }
@@ -233,7 +234,7 @@ private fun CaptureCard(
                         Text(
                             AppInfo.label(ctx, capture.sourcePackage),
                             style = MaterialTheme.typography.labelSmall,
-                            color = InkLight,
+                            color = semantic.mutedText,
                             maxLines = 1,
                             modifier = Modifier.padding(start = 4.dp),
                         )
@@ -241,44 +242,55 @@ private fun CaptureCard(
                     }
                 }
                 Spacer(Modifier.height(7.dp))
-                Text(capture.title ?: if (capture.status == CaptureStatus.DONE) "Untitled moment" else "New voice note", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                Text(capture.title ?: if (capture.status == CaptureStatus.DONE) "Untitled moment" else "New capture", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1)
                 Spacer(Modifier.height(4.dp))
                 val transition = rememberInfiniteTransition(label = "cardPulse")
                 val alpha by transition.animateFloat(0.4f, 1f, infiniteRepeatable(tween(800, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "textAlpha")
                 val isProcessing = capture.status == CaptureStatus.PENDING || capture.status == CaptureStatus.TRANSCRIBING
                 Text(snippet, style = MaterialTheme.typography.bodyMedium, maxLines = 3, modifier = Modifier.alpha(if (isProcessing) alpha else 1f))
-                if (capture.tags.isNotBlank()) {
-                    Spacer(Modifier.height(8.dp))
-                    Surface(shape = RoundedCornerShape(50), color = CoralLight) {
-                        Text(capture.tags, modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall, color = Ink)
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Surface(shape = RoundedCornerShape(50), color = semantic.successSoft) {
+                        Text(
+                            CaptureCategory.entries.firstOrNull { it.name == capture.category }?.label ?: CaptureCategory.OTHER.label,
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = semantic.onSoft,
+                        )
                     }
+                if (capture.tags.isNotBlank()) {
+                    Surface(shape = RoundedCornerShape(50), color = semantic.accentSoft) {
+                        Text(capture.tags, modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall, color = semantic.onSoft)
+                    }
+                }
                 }
                 Spacer(Modifier.height(9.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     StatusPill(capture)
                     Spacer(Modifier.weight(1f))
-                    IconButton(onClick = onFavorite) { Icon(if (capture.isFavorite) Icons.Outlined.Star else Icons.Outlined.StarBorder, contentDescription = if (capture.isFavorite) "Unfavorite" else "Favorite", tint = if (capture.isFavorite) Coral else InkLight) }
+                    IconButton(onClick = onFavorite) { Icon(if (capture.isFavorite) Icons.Outlined.Star else Icons.Outlined.StarBorder, contentDescription = if (capture.isFavorite) "Unfavorite" else "Favorite", tint = if (capture.isFavorite) MaterialTheme.colorScheme.primary else semantic.mutedText) }
                     Box {
-                        IconButton(onClick = { tagMenuOpen = true }) { Icon(Icons.AutoMirrored.Outlined.Label, contentDescription = "Add tag", tint = InkLight) }
+                        IconButton(onClick = { tagMenuOpen = true }) { Icon(Icons.AutoMirrored.Outlined.Label, contentDescription = "Add tag", tint = semantic.mutedText) }
                         DropdownMenu(expanded = tagMenuOpen, onDismissRequest = { tagMenuOpen = false }) {
                             quickTags.forEach { tag -> DropdownMenuItem(text = { Text(tag) }, onClick = { onTag(tag); tagMenuOpen = false }) }
                         }
                     }
-                    IconButton(onClick = onShare) { Icon(Icons.Outlined.Share, contentDescription = "Share note", tint = InkLight) }
-                    IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Outlined.DeleteOutline, contentDescription = "Delete note", tint = Coral) }
+                    IconButton(onClick = onShare) { Icon(Icons.Outlined.Share, contentDescription = "Share note", tint = semantic.mutedText) }
+                    IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Outlined.DeleteOutline, contentDescription = "Delete note", tint = MaterialTheme.colorScheme.primary) }
                 }
             }
-            IconButton(onClick = onClick) { Icon(Icons.Outlined.ChevronRight, contentDescription = "Open capture", tint = InkLight) }
+            IconButton(onClick = onClick) { Icon(Icons.Outlined.ChevronRight, contentDescription = "Open capture", tint = semantic.mutedText) }
         }
     }
 }
 
 @Composable
 private fun StatusPill(capture: Capture) {
+    val semantic = MaterialTheme.semantic
     val (label, background, foreground) = when (capture.status) {
-        CaptureStatus.DONE -> Triple("ready · ${capture.durationMs / 1000}s", SageLight, Ink)
-        CaptureStatus.FAILED -> Triple("needs retry", CoralLight, Ink)
-        else -> Triple("transcribing…", MustardLight, Ink)
+        CaptureStatus.DONE -> Triple("ready · ${capture.durationMs / 1000}s", semantic.successSoft, semantic.onSoft)
+        CaptureStatus.FAILED -> Triple("needs retry", semantic.accentSoft, semantic.onSoft)
+        else -> Triple("analyzing…", semantic.warningSoft, semantic.onSoft)
     }
     Surface(shape = RoundedCornerShape(50), color = background) {
         Row(
@@ -287,14 +299,14 @@ private fun StatusPill(capture: Capture) {
         ) {
             Text(label, style = MaterialTheme.typography.labelSmall, color = foreground)
             if (capture.status == CaptureStatus.PENDING || capture.status == CaptureStatus.TRANSCRIBING) {
-                ProcessingDots()
+                ProcessingDots(foreground)
             }
         }
     }
 }
 
 @Composable
-private fun ProcessingDots() {
+private fun ProcessingDots(color: Color) {
     val transition = rememberInfiniteTransition(label = "processingDots")
     val dotAlpha by transition.animateFloat(
         initialValue = 0.25f,
@@ -305,7 +317,7 @@ private fun ProcessingDots() {
         ),
         label = "dotAlpha",
     )
-    Text(" · · ·", modifier = Modifier.alpha(dotAlpha), style = MaterialTheme.typography.labelSmall, color = Ink)
+    Text(" · · ·", modifier = Modifier.alpha(dotAlpha), style = MaterialTheme.typography.labelSmall, color = color)
 }
 
 @Composable
@@ -315,22 +327,24 @@ private fun EmptyGallery() {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
-            modifier = Modifier.size(88.dp).clip(CircleShape).background(CoralLight),
+            modifier = Modifier.size(88.dp).clip(CircleShape).background(MaterialTheme.semantic.accentSoft),
             contentAlignment = Alignment.Center,
         ) {
-            Text("✦", style = MaterialTheme.typography.displayMedium, color = Coral)
+            Text("✦", style = MaterialTheme.typography.displayMedium, color = MaterialTheme.colorScheme.primary)
         }
         Spacer(Modifier.height(18.dp))
         Text("Nothing here yet", style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(7.dp))
-        Text("Hold the power button, say what’s on your mind,\nand your first little moment will appear here.", style = MaterialTheme.typography.bodyMedium, color = InkLight)
+        Text("Hold the power button, say what’s on your mind,\nand your first little moment will appear here.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.semantic.mutedText)
         Spacer(Modifier.height(18.dp))
-        Text("your thoughts, kept close", style = MaterialTheme.typography.labelSmall, color = InkFaint)
+        Text("your thoughts, kept close", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.semantic.faintText)
     }
 }
 
 @Composable
 private fun NotebookDoodle(modifier: Modifier = Modifier) {
+    val strokeColor = MaterialTheme.colorScheme.primary
+    val dotColor = MaterialTheme.semantic.faintText
     Canvas(modifier) {
         val path = Path().apply {
             moveTo(4.dp.toPx(), size.height * .55f)
@@ -338,7 +352,7 @@ private fun NotebookDoodle(modifier: Modifier = Modifier) {
             cubicTo(size.width * .54f, 0f, size.width * .62f, size.height, size.width * .73f, size.height * .48f)
             cubicTo(size.width * .84f, 0f, size.width * .92f, size.height * .8f, size.width - 4.dp.toPx(), size.height * .45f)
         }
-        drawPath(path, color = Coral.copy(alpha = .6f), style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round))
-        drawCircle(InkFaint, radius = 2.dp.toPx(), center = Offset(size.width * .08f, size.height * .52f))
+        drawPath(path, color = strokeColor.copy(alpha = .6f), style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round))
+        drawCircle(dotColor, radius = 2.dp.toPx(), center = Offset(size.width * .08f, size.height * .52f))
     }
 }

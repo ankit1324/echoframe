@@ -1,15 +1,7 @@
 package com.nothingai.capture.ui.settings
 
 import androidx.compose.ui.graphics.Color
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkInfo
-import androidx.work.WorkManager
-import androidx.work.workDataOf
-import com.nothingai.capture.stt.ModelDownloaderWorker
 import com.nothingai.capture.R
-import com.nothingai.capture.stt.WhisperModel
-import java.io.File
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -25,24 +17,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import com.nothingai.capture.ui.theme.InkLight
-import com.nothingai.capture.ui.theme.ParchmentDark
+import com.nothingai.capture.ui.theme.ThemeChoice
+import com.nothingai.capture.ui.theme.semantic
 
 @Composable
 fun SettingsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val prefs = remember { SettingsPrefs.get(context) }
-    
-    var language by remember { mutableStateOf(prefs.getString("language", "Multilingual (Hinglish)") ?: "Multilingual (Hinglish)") }
-    var theme by remember { mutableStateOf(prefs.getString("theme", "System Default") ?: "System Default") }
-    
-    val workManager = WorkManager.getInstance(context)
-    val workInfos by workManager.getWorkInfosByTagFlow("model_download").collectAsStateWithLifecycle(emptyList())
-    var currentModelId by remember { mutableStateOf(prefs.getString("whisper_model", "tiny") ?: "tiny") }
-    
-    val activeDownload = workInfos.firstOrNull { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
-    val isDownloading = activeDownload != null
-    val downloadProgress = activeDownload?.progress?.getInt(ModelDownloaderWorker.KEY_PROGRESS, 0) ?: 0
+    val mutedText = MaterialTheme.semantic.mutedText
+
+    var theme by remember { mutableStateOf(ThemeChoice.fromPreference(prefs.getString(ThemeChoice.PREF_KEY, null)).label) }
 
     Column(
         Modifier
@@ -59,59 +43,26 @@ fun SettingsScreen(onBack: () -> Unit) {
         }
         Spacer(Modifier.height(24.dp))
 
-        Text("Transcription", style = MaterialTheme.typography.titleMedium, color = InkLight, modifier = Modifier.padding(start = 8.dp, bottom = 8.dp))
-        Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = ParchmentDark)) {
+        Text("Image Analysis", style = MaterialTheme.typography.titleMedium, color = mutedText, modifier = Modifier.padding(start = 8.dp, bottom = 8.dp))
+        Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
             Column(Modifier.padding(16.dp)) {
-                SettingRow("Language", language, listOf("English", "Multilingual (Hinglish)")) { 
-                    language = it; prefs.edit().putString("language", it).apply() 
-                }
-                Spacer(Modifier.height(16.dp))
-                val options = WhisperModel.values().map { it.label }
-                val selectedLabel = WhisperModel.values().firstOrNull { it.id == currentModelId }?.label ?: WhisperModel.TINY.label
-                
-                SettingRow(
-                    label = if (isDownloading) "Downloading Model ($downloadProgress%)" else "AI Model", 
-                    selected = selectedLabel, 
-                    options = options
-                ) { label ->
-                    val model = WhisperModel.values().first { it.label == label }
-                    if (model.id == currentModelId) return@SettingRow
-
-                    // No model is bundled anymore — every model, including Base, is only
-                    // usable once its file has actually been downloaded.
-                    val file = File(context.filesDir, "models/${model.filename}")
-                    if (file.exists()) {
-                        currentModelId = model.id
-                        prefs.edit().putString("whisper_model", model.id).apply()
-                    } else if (!isDownloading) {
-                        val req = OneTimeWorkRequestBuilder<ModelDownloaderWorker>()
-                            .addTag("model_download")
-                            .setInputData(workDataOf(ModelDownloaderWorker.KEY_MODEL_ID to model.id))
-                            .build()
-                        workManager.enqueue(req)
-                        // Speculatively select it now; until the download finishes,
-                        // WhisperTranscriber.getModelFile() throws ModelNotDownloadedException,
-                        // which TranscribeWorker catches and fails the capture gracefully
-                        // (retryable once the download completes).
-                        currentModelId = model.id
-                        prefs.edit().putString("whisper_model", model.id).apply()
-                    }
-                }
+                Text("Offline OCR: Latin text", style = MaterialTheme.typography.bodyLarge)
+                Text("Basic image labels are saved with each screenshot.", style = MaterialTheme.typography.bodySmall, color = mutedText)
             }
         }
-        
+
         Spacer(Modifier.height(24.dp))
-        Text("Appearance", style = MaterialTheme.typography.titleMedium, color = InkLight, modifier = Modifier.padding(start = 8.dp, bottom = 8.dp))
-        Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = ParchmentDark)) {
+        Text("Appearance", style = MaterialTheme.typography.titleMedium, color = mutedText, modifier = Modifier.padding(start = 8.dp, bottom = 8.dp))
+        Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
             Column(Modifier.padding(16.dp)) {
-                SettingRow("Theme", theme, listOf("System Default", "Light Notebook", "Dark Ink")) { 
-                    theme = it; prefs.edit().putString("theme", it).apply() 
+                SettingRow("Theme", theme, ThemeChoice.entries.map { it.label }) {
+                    theme = it; prefs.edit().putString(ThemeChoice.PREF_KEY, it).apply()
                 }
             }
         }
 
         Spacer(Modifier.weight(1f))
-        Text("${context.getString(R.string.app_name)} v0.1.0", style = MaterialTheme.typography.labelSmall, color = InkLight, modifier = Modifier.align(Alignment.CenterHorizontally))
+        Text("${context.getString(R.string.app_name)} v0.1.0", style = MaterialTheme.typography.labelSmall, color = mutedText, modifier = Modifier.align(Alignment.CenterHorizontally))
         Spacer(Modifier.height(16.dp))
     }
 }

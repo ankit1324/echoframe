@@ -1,4 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Echoframe</string>
+
+    <!--
+      Every user-visible mention of the brand resolves through app_name, so a rename only ever
+      has to touch the line above. Do not hardcode the product name in Kotlin.
+    -->
+    <string name="analyzing_notification_title">@string/app_name</string>
+    <string name="welcome_note_title">Welcome to %1$s</string>
+    <string name="welcome_note_body">Welcome to %1$s. Hold the power button to save audio, screenshot text, and useful image labels.</string>
+    <string name="calendar_event_title">Saved from %1$s</string>
 </resources>

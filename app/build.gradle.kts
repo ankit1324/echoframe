@@ -1,9 +1,32 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
 }
+
+// --- Release signing -------------------------------------------------------
+// Credentials live OUTSIDE the repo: either <root>/keystore.properties (git-ignored,
+// see keystore.properties.example) or environment variables (for CI). Nothing here
+// is committed. If none are present the release build is simply left unsigned —
+// assembleDebug and the unit tests keep working for developers without the keystore.
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.isFile) keystorePropertiesFile.inputStream().use { load(it) }
+}
+
+fun signingValue(key: String, envName: String): String? =
+    (keystoreProperties.getProperty(key) ?: System.getenv(envName))?.trim()?.takeIf { it.isNotEmpty() }
+
+val releaseStoreFile = signingValue("storeFile", "ECHOFRAME_STORE_FILE")?.let { rootProject.file(it) }
+val releaseStorePassword = signingValue("storePassword", "ECHOFRAME_STORE_PASSWORD")
+val releaseKeyAlias = signingValue("keyAlias", "ECHOFRAME_KEY_ALIAS")
+val releaseKeyPassword = signingValue("keyPassword", "ECHOFRAME_KEY_PASSWORD")
+
+val hasReleaseSigning = releaseStoreFile?.isFile == true &&
+    releaseStorePassword != null && releaseKeyAlias != null && releaseKeyPassword != null
 
 android {
     namespace = "com.nothingai.capture"
@@ -17,8 +40,16 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        externalNativeBuild { cmake { cppFlags += "-std=c++17" } }
-        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+    }
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = releaseStoreFile
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
     }
     buildTypes {
         getByName("release") {
@@ -28,20 +59,36 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            // Debug-signed so the shrunk APK installs directly for testing.
-            // Swap in a real release keystore before distributing.
-            signingConfig = signingConfigs.getByName("debug")
+            // Never fall back to the debug keystore: Play rejects APKs/AABs signed with
+            // CN=Android Debug. Without credentials the release output stays unsigned,
+            // which fails loudly at install/upload time instead of shipping a debug key.
+            signingConfig = if (hasReleaseSigning) signingConfigs.getByName("release") else null
         }
     }
     buildFeatures { compose = true }
     composeOptions { }
-    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+}
+
+// Warn only when a release artifact is actually being built, so debug builds and unit
+// tests stay quiet for developers who do not hold the keystore.
+if (!hasReleaseSigning) {
+    tasks.configureEach {
+        if (name == "assembleRelease" || name == "bundleRelease") {
+            doFirst {
+                logger.warn(
+                    "Echoframe: no release signing credentials found — this output will be UNSIGNED. " +
+                        "Create keystore.properties at the repo root (see keystore.properties.example) or set " +
+                        "ECHOFRAME_STORE_FILE / ECHOFRAME_STORE_PASSWORD / ECHOFRAME_KEY_ALIAS / ECHOFRAME_KEY_PASSWORD."
+                )
+            }
+        }
+    }
 }
 
 dependencies {
@@ -59,7 +106,8 @@ dependencies {
     ksp("androidx.room:room-compiler:2.6.1")
 
     implementation("androidx.work:work-runtime-ktx:2.9.1")
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.google.mlkit:text-recognition:16.0.1")
+    implementation("com.google.mlkit:image-labeling:17.0.9")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
