@@ -33,6 +33,31 @@ the `ECHOFRAME_STORE_FILE` / `ECHOFRAME_STORE_PASSWORD` / `ECHOFRAME_KEY_ALIAS` 
 committed. Without credentials, `assembleRelease` still runs but emits an **unsigned**
 artifact (it never falls back to the debug key).
 
+The release variant is split by ABI: `arm64-v8a` and `armeabi-v7a` APKs plus a universal
+one. ML Kit's x86/x86_64 native libraries are ~47MB that only emulators load, so the
+per-ABI artifacts are roughly a third the size of the universal build.
+
+## Releases
+
+Every push to `main` runs `.github/workflows/release.yml`: unit tests, lint, a signed
+release build, an explicit `apksigner` check on each APK, then a GitHub release tagged
+`v<versionName>-build.<run number>`. Pull requests run the same tests and lint via
+`.github/workflows/ci.yml`.
+
+CI signs with four repository secrets. Set them once, from a machine holding the keystore:
+
+```sh
+base64 -i echoframe-release.jks | gh secret set ECHOFRAME_KEYSTORE_BASE64
+gh secret set ECHOFRAME_STORE_PASSWORD
+gh secret set ECHOFRAME_KEY_ALIAS
+gh secret set ECHOFRAME_KEY_PASSWORD
+```
+
+Without them the release workflow stops before it builds, rather than publishing an
+unsigned APK. `versionCode` comes from the workflow run number so each release build is
+distinct; local builds stay at 1. Bumping `versionName` in `app/build.gradle.kts` is
+still manual.
+
 ## Tests
 
 ```sh

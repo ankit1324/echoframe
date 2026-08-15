@@ -37,7 +37,9 @@ android {
         applicationId = "com.nothingai.capture"
         minSdk = 31
         targetSdk = 35
-        versionCode = 1
+        // CI passes the workflow run number so every release build carries a distinct, increasing
+        // versionCode. Local builds stay at 1.
+        versionCode = System.getenv("ECHOFRAME_VERSION_CODE")?.toIntOrNull() ?: 1
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -65,6 +67,18 @@ android {
             signingConfig = if (hasReleaseSigning) signingConfigs.getByName("release") else null
         }
     }
+    // ML Kit ships ~47MB of x86/x86_64 native pipeline libraries that only emulators ever load.
+    // Splitting by ABI takes the phone-sized download from ~92MB to ~26MB. The universal APK is
+    // still produced as the fallback for anyone unsure of their device's ABI.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a")
+            isUniversalApk = true
+        }
+    }
+
     buildFeatures { compose = true }
     composeOptions { }
     compileOptions {
