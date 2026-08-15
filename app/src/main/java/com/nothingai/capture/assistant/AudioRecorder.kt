@@ -149,19 +149,16 @@ class AudioRecorder(private val sampleRate: Int = 16000) {
                 raf.seek(0)
                 raf.write(Wav.header(Wav.clampPcmByteCount(pcmBytes), sampleRate))
             }
+        } catch (se: SecurityException) {
+            // RECORD_AUDIO is a runtime permission, so it can be absent or revoked even though the
+            // manifest declares it. Handled separately from the catch-all below because it is a
+            // permission state rather than a recorder fault: the capture continues with whatever
+            // the screenshot yields, silently and without audio.
+            Log.e("AudioRecorder", "RECORD_AUDIO not granted; continuing without audio", se)
+            patchHeaderQuietly(outFile)
         } catch (t: Throwable) {
             Log.e("AudioRecorder", "recording failed", t)
-            // Best-effort: re-patch the header so the file on disk stays a structurally
-            // valid WAV even if the failure happened mid-stream (after some PCM was written
-            // but before the success-path header patch above ran).
-            try {
-                RandomAccessFile(outFile, "rw").use { raf ->
-                    raf.seek(0)
-                    raf.write(Wav.header(Wav.clampPcmByteCount(pcmBytes), sampleRate))
-                }
-            } catch (t2: Throwable) {
-                Log.e("AudioRecorder", "failed to patch WAV header after error", t2)
-            }
+            patchHeaderQuietly(outFile)
         } finally {
             if (started) {
                 try {
@@ -175,6 +172,22 @@ class AudioRecorder(private val sampleRate: Int = 16000) {
             } catch (t: Throwable) {
                 Log.e("AudioRecorder", "record.release() failed", t)
             }
+        }
+    }
+
+    /**
+     * Best-effort header rewrite for the failure paths, so the file on disk stays a structurally
+     * valid WAV even when the failure happened mid-stream — after some PCM was written, but before
+     * the success-path patch ran.
+     */
+    private fun patchHeaderQuietly(outFile: File) {
+        try {
+            RandomAccessFile(outFile, "rw").use { raf ->
+                raf.seek(0)
+                raf.write(Wav.header(Wav.clampPcmByteCount(pcmBytes), sampleRate))
+            }
+        } catch (t: Throwable) {
+            Log.e("AudioRecorder", "failed to patch WAV header after error", t)
         }
     }
 
